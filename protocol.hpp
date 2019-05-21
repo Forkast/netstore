@@ -9,7 +9,12 @@ protected:
 	char[] data;
 
 public:
-	SimplCmd();
+	SimplCmd()
+	{
+		for (int i = 0; i < 10; i++) {
+			cmd[i] = '\0';
+		}
+	}
 	virtual void send() = 0;
 };
 
@@ -17,39 +22,63 @@ public:
 class HelloCmd : public SimplCmd
 {
 public:
-	HelloCmd();
+	HelloCmd()
+	: SimplCmd{}
+	{
+		cmd = "HELLO";
+	}
 };
 
 class ListCmd : public SimplCmd
 {
 public:
-	ListCmd();
+	ListCmd()
+	: SimplCmd{}
+	{
+		cmd = "LIST";
+	}
 };
 
 class MyCmd : public SimplCmd
 {
 public:
-	MyCmd();
+	MyCmd()
+	: SimplCmd{}
+	{
+		cmd = "MY_LIST";
+	}
 };
 
 // Pobieranie pliku z serwera
 class GetCmd : public SimplCmd
 {
 public:
-	GetCmd();
+	GetCmd()
+	: SimplCmd{}
+	{
+		cmd = "GET";
+	}
 };
 
 // Usuwanie pliku z serwera
 class DelCmd : public SimplCmd
 {
 public:
-	SimplCmd();
+	DelCmd()
+	: SimplCmd{}
+	{
+		cmd = "DEL";
+	}
 };
 
 class NWCmd : public SimplCmd
 {
 public:
-	NWCmd();
+	NWCmd()
+	: SimplCmd{}
+	{
+		cmd = "NO_WAY";
+	}
 };
 
 
@@ -66,27 +95,43 @@ protected:
 class GoodCmd : public CmplxCmd
 {
 public:
-	GoodCmd();
+	GoodCmd()
+	: CmplxCmd{}
+	{
+		cmd = "GOOD_DAY";
+	}
 };
 
 // 
 class ConnCmd : public CmplxCmd
 {
 public:
-	ConnCmd();
+	ConnCmd()
+	: CmplxCmd{}
+	{
+		cmd = "CONNECT_ME";
+	}
 };
 
 // Dodawanie pliku do grupy
 class AddCmd : public CmplxCmd
 {
 public:
-	AddCmd();
+	AddCmd()
+	: CmplxCmd{}
+	{
+		cmd = "ADD";
+	}
 };
 
 class CanCmd : public CmplxCmd
 {
 public:
-	CanCmd();
+	CanCmd()
+	: CmplxCmd{}
+	{
+		cmd = "CAN_ADD";
+	}
 };
 
 htobe64();
