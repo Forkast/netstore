@@ -1,21 +1,57 @@
 #pragma once
 #include <endian.h>
+#include <cstdint>
+#include <cstring>
+#include <ios>
+#include <iostream>
 
-class SimplCmd
-{
+using namespace std;
+
+#define HELLO "HELLO"
+#define LIST "LIST"
+#define MY_LIST "MY_LIST"
+#define GET "GET"
+#define DEL "DEL"
+#define NO_WAY "NO_WAY"
+#define GOOD_DAY "GOOD_DAY"
+#define CONNECT_ME "CONNECT_ME"
+#define ADD "ADD"
+#define CAN_ADD "CAN_ADD"
+
+class Command {
+public:
+	const static int MAX = 10;
 protected:
-	char[10] cmd;
+	char cmd[Command::MAX];
 	uint64_t cmd_seq;
-	char[] data;
+	char data[];
 
+public:
+	virtual ~Command() {};
+	void getCmd() {
+		for (int i = 0; i < MAX; i++) {
+			cout << std::hex << (uint8_t)cmd[i];
+		}
+		cout << endl;
+		cout << hex << cmd_seq << endl;
+	}
+	void setNetworkSeq(uint64_t seq) {
+// htobe64();
+		cmd_seq = be64toh(seq);
+	}
+};
+
+class SimplCmd : public Command
+{
 public:
 	SimplCmd()
 	{
-		for (int i = 0; i < 10; i++) {
+		for (int i = 0; i < Command::MAX; i++) {
 			cmd[i] = '\0';
 		}
 	}
-	virtual void send() = 0;
+	virtual ~SimplCmd() {};
+	virtual void send() {}; //TODO pure
 };
 
 // Rozpoznawanie listy serwerów w grupie - zapytanie
@@ -25,7 +61,7 @@ public:
 	HelloCmd()
 	: SimplCmd{}
 	{
-		cmd = "HELLO";
+		strcpy(cmd, HELLO);
 	}
 };
 
@@ -35,7 +71,7 @@ public:
 	ListCmd()
 	: SimplCmd{}
 	{
-		cmd = "LIST";
+		strcpy(cmd, LIST);
 	}
 };
 
@@ -45,7 +81,7 @@ public:
 	MyCmd()
 	: SimplCmd{}
 	{
-		cmd = "MY_LIST";
+		strcpy(cmd, MY_LIST);
 	}
 };
 
@@ -56,7 +92,7 @@ public:
 	GetCmd()
 	: SimplCmd{}
 	{
-		cmd = "GET";
+		strcpy(cmd, GET);
 	}
 };
 
@@ -67,7 +103,7 @@ public:
 	DelCmd()
 	: SimplCmd{}
 	{
-		cmd = "DEL";
+		strcpy(cmd, DEL);
 	}
 };
 
@@ -77,18 +113,13 @@ public:
 	NWCmd()
 	: SimplCmd{}
 	{
-		cmd = "NO_WAY";
+		strcpy(cmd, NO_WAY);
 	}
 };
 
 
-class CmplxCmd
+class CmplxCmd : public Command
 {
-protected:
-	char[10] cmd;
-	uint64_t cmd_seq;
-	uint64_t param;
-	char[] data;
 };
 
 // Rozpoznawanie listy serwerów w grupie - odpowiedz
@@ -98,7 +129,7 @@ public:
 	GoodCmd()
 	: CmplxCmd{}
 	{
-		cmd = "GOOD_DAY";
+		strcpy(cmd, GOOD_DAY); 
 	}
 };
 
@@ -109,7 +140,7 @@ public:
 	ConnCmd()
 	: CmplxCmd{}
 	{
-		cmd = "CONNECT_ME";
+		strcpy(cmd, CONNECT_ME);
 	}
 };
 
@@ -120,7 +151,7 @@ public:
 	AddCmd()
 	: CmplxCmd{}
 	{
-		cmd = "ADD";
+		strcpy(cmd, ADD);
 	}
 };
 
@@ -130,9 +161,6 @@ public:
 	CanCmd()
 	: CmplxCmd{}
 	{
-		cmd = "CAN_ADD";
+		strcpy(cmd, CAN_ADD);
 	}
 };
-
-htobe64();
-be64toh();

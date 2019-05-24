@@ -1,10 +1,17 @@
 #include "server.hpp"
 
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <memory>
+#include <string.h>
 #include <sys/select.h>
-#include <csignal>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <iostream>
+#include <unistd.h>
 
-#define syserr(x); {stderr << x << endl; \
+#define syserr(x) {cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl; \
 exit(0);}
 
 using namespace std;
@@ -13,8 +20,8 @@ using namespace std::filesystem;
 Server::Server(const string & mcast_addr,
 			   in_port_t cmd_port,
 			   const string & directory,
-			   unsigned max_space = 52428800,
-			   int timeout = 5)
+			   unsigned max_space,
+			   int timeout)
 	: _mcast_addr{mcast_addr},
 	  _cmd_port{cmd_port},
 	  _directory{directory},
@@ -33,10 +40,7 @@ Server::~Server()
 void
 Server::run()
 {
-	fd_set rfds, wfds;
-
-	tv.tv_sec = 5;
-	tv.tv_usec = 0;
+	fd_set rfds, wfds;;
 
 	FD_ZERO(&rfds);
 	FD_SET(_sock, &rfds);
@@ -48,20 +52,28 @@ Server::run()
 		if (p.socket > max)
 			max = p.socket;
 		FD_SET(p.socket, &wfds);
-		if (p.timeout < timeout)
+		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac milisekundy
 			timeout = p.timeout;
 	}
 
 	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
+	cout << "select out\n";
 
 	if (a == 0) {
-		for (
+		//for (//wywalic przeterminowane sockety
 	} else {
-		if (FD_ISSET(_sock, rfds)) {
-			read_and_parse();
+		if (FD_ISSET(_sock, &rfds)) {
+			sockaddr remote_addr;
+			socklen_t socklen;
+			char buf[Command::MAX];
+			int len = recvfrom(_sock, buf, Command::MAX, 0, &remote_addr, &socklen); //recvfrom
+			cout << "przeczytalem " << len << " bajtow" << endl;
+			auto cmd = shared_ptr<Command>(get_command(string(buf)));
+			getCmdSeq(cmd);
+			cmd->getCmd();
 		}
 		for (auto const & p : _data_socks) {
-			if (FD_ISSET(p.socket, wfds)) {
+			if (FD_ISSET(p.socket, &wfds)) {
 				send_file(p);
 			}
 		}
@@ -73,7 +85,7 @@ Server::index_files()
 {
 	for (directory_entry const & f : directory_iterator(_directory)) {
 		if (f.is_regular_file()) {
-			_files.insert(f);
+// 			_files.insert(f);
 			_space_used += f.file_size();
 		}
 	}
@@ -84,15 +96,16 @@ Server::index_files()
 void
 Server::join_broadcast()
 {
-	struct sockaddr_in local_address;
-	struct ip_mreq ip_mreq;
+	sockaddr_in local_address;
+	ip_mreq ip_mreq;
 	_sock = socket(AF_INET, SOCK_DGRAM, 0);
+	cout << _sock << endl;
 	if (_sock < 0)
 		syserr("socket");
 
 	/* podpięcie się do grupy rozsyłania */
 	ip_mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-	if (inet_aton(multicast_dotted_address, &ip_mreq.imr_multiaddr) == 0)
+	if (inet_aton(_mcast_addr.c_str(), &ip_mreq.imr_multiaddr) == 0)
 		syserr("inet_aton");
 	if (setsockopt(_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void*)&ip_mreq, sizeof ip_mreq) < 0)
 		syserr("setsockopt");
@@ -105,11 +118,47 @@ Server::join_broadcast()
 		syserr("bind");
 }
 
+Command *
+Server::get_command(const string & buf)
+{
+	if (!buf.compare(HELLO)) {
+		return new HelloCmd{};
+	} else if (!buf.compare(LIST)) {
+		return new ListCmd{};
+	} else if (!buf.compare(GET)) {
+		return new GetCmd{};
+	} else if (!buf.compare(DEL)) {
+		return new DelCmd{};
+	} else if (!buf.compare(ADD)) {
+		return new AddCmd{};
+	} else {
+		return nullptr;
+	}
+}
+
+void
+Server::getCmdSeq(shared_ptr<Command> &cmd)
+{
+	sockaddr remote_addr;
+	socklen_t socklen;
+	uint64_t seq;
+	recvfrom(_sock, &seq, sizeof seq, 0, &remote_addr, &socklen);
+	cout << hex << seq << endl;
+	cmd->setNetworkSeq(seq);
+}
+
 /* Jeśli serwer otrzyma polecenie dodania pliku lub pobrania pliku, to powinien otworzyć nowe gniazdo TCP na losowym wolnym porcie przydzielonym przez system operacyjny i port ten przekazać w odpowiedzi węzłowi klienckiemu. Serwer oczekuje maksymalnie TIMEOUT sekund na nawiązanie połączenia przez klienta i jeśli takie nie nastąpi, to port TCP powinien zostać niezwłocznie zamknięty. Serwer w czasie oczekiwania na podłączenie się klienta i podczas przesyłania pliku powinien obsługiwać także inne zapytania od klientów.*/
 void
 Server::read_and_parse()
 {
 	// commands: Hello -> GoodDay, List -> MyList, Get -> Connect_me, Del -> null, Add -> no_way / can_add
+	
+}
+
+void
+Server::send_file(Socket socket)
+{
+	
 }
 
 /* non blocking connect with timeout
