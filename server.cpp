@@ -1,6 +1,6 @@
 #include "server.hpp"
 
-
+#include <algorithm>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -56,14 +56,16 @@ Server::run()
 			FD_SET(p.file, &rfds);
 			cout << "set reading socket" << endl;
 		} else {// czytam tylko jak poprzednia paczka została wysłana
-			sockaddr addr;
-			socklen_t len = sizeof addr;
-			if (getpeername(p.socket, &addr, &len) == 0) {
-				if (p.socket > max)
-					max = p.socket;
+			if (p.socket > max)
+				max = p.socket;
+			if (p.conn) {
 				FD_SET(p.socket, &wfds);
 				cout << "set writing tcp socket" << endl;
-			} // TODO: usuwamy po timeoucie
+			} else {
+				FD_SET(p.socket, &rfds);
+				cout << "set reading TCP socket" << endl;
+			}
+			// TODO: usuwamy po timeoucie
 		}
 // 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac milisekundy
 // 			timeout = p.timeout;
@@ -106,11 +108,28 @@ Server::run()
 				cout << "we can read from the file" << endl;
 				read_file(p);
 			}
+			if (FD_ISSET(p.socket, &rfds)) {
+				cout << "time to accept connection" << endl;
+				sockaddr_in addr;
+				socklen_t len = sizeof addr;
+				int s = accept(p.socket, (sockaddr *) &addr, &len);
+				cout << "connection from: " << inet_ntoa(addr.sin_addr) << ":" << dec << ntohs(addr.sin_port) << endl;
+				close(p.socket);
+				p.socket = s;
+				p.conn = true;
+			}
 			if (FD_ISSET(p.socket, &wfds)) {
 				cout << "socket is open so im sending!" << endl;
-				send_file(p);
+				int a = send_file(p);
+				if (a < 0) {
+					p.todel = true;
+				}
 			}
 		}
+		_data_socks.erase(
+			std::remove_if(_data_socks.begin(), _data_socks.end(),
+				[](const Socket & s) { return s.todel; }),
+			_data_socks.end());
 	}
 }
 
@@ -124,7 +143,6 @@ Server::index_files()
 		}
 	}
 }
-
 
 /* Serwer powinien podłączyć się do grupy rozgłaszania ukierunkowanego pod wskazanym adresem MCAST_ADDR. Serwer powinien nasłuchiwać na porcie CMD_PORT poleceń otrzymanych z sieci protokołem UDP także na swoim adresie unicast. Serwer powinien reagować na pakiety UDP zgodnie z protokołem opisanym wcześniej. */
 void
@@ -151,7 +169,6 @@ Server::join_broadcast()
 		syserr("bind");
 }
 
-
 void
 Server::push_commands(const string & buf, sockaddr_in remote_addr)
 {
@@ -177,12 +194,13 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 			syserr("opening file");
 		sock.sent = true;
 		sock.start_time = std::chrono::system_clock::now();
+		sock.conn = false;
+		sock.todel = false;
 		open_tcp_port(sock);
 		_data_socks.push_back(sock);
 		_cmd_queue.push(shared_ptr <Command> (new ConnectMeCmd{buf,
 													remote_addr,
-													string(get_cmd.file_name()),
-													(uint64_t)sock.socket}));
+													string(get_cmd.file_name())}));
 	} else if (!strncmp(buf.c_str(), DEL, strlen(DEL))) {
 		
 	} else if (!strncmp(buf.c_str(), ADD, strlen(ADD))) {
@@ -198,7 +216,7 @@ Server::open_tcp_port(Socket & sock)
 	socklen_t len = sizeof local_address;
 
 	local_address.sin_family = AF_INET;
-	local_address.sin_addr.s_addr = INADDR_ANY;
+	local_address.sin_addr.s_addr = htonl(INADDR_ANY);
 	local_address.sin_port = 0;
 
 	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof local_address) < 0)
@@ -207,10 +225,11 @@ Server::open_tcp_port(Socket & sock)
 	if (getsockname(sock.socket, (struct sockaddr *)&local_address, &len) < 0)
 		syserr("getsockname");
 
-	fcntl(sock.socket, F_SETFL, O_NONBLOCK);
-	cout << "nowy port to " << local_address.sin_port << endl;
+// 	fcntl(sock.socket, F_SETFL, O_NONBLOCK);
+	cout << "nowy port to " << inet_ntoa(local_address.sin_addr) << ":" << ntohs(local_address.sin_port) << endl;
 
-	connect(sock.socket, (struct sockaddr *)&local_address, sizeof local_address);
+	if (listen(sock.socket, 2) < 0)
+		syserr("listen");
 }
 
 /* Jeśli serwer otrzyma polecenie dodania pliku lub pobrania pliku, to powinien otworzyć nowe gniazdo TCP na losowym wolnym porcie przydzielonym przez system operacyjny i port ten przekazać w odpowiedzi węzłowi klienckiemu. Serwer oczekuje maksymalnie TIMEOUT sekund na nawiązanie połączenia przez klienta i jeśli takie nie nastąpi, to port TCP powinien zostać niezwłocznie zamknięty. Serwer w czasie oczekiwania na podłączenie się klienta i podczas przesyłania pliku powinien obsługiwać także inne zapytania od klientów.*/
@@ -221,14 +240,18 @@ Server::read_and_parse()
 	
 }
 
-void
+int
 Server::send_file(Socket & sock)
 {
+	if (sock.size == 0) {
+		return -1;
+	}
 	int a = send(sock.socket, sock.buf, sock.size, 0);
 	if (a < 0)
 		prnterr("sending file");
 	sock.sent = true;
 	sock.size = 0;
+	return 1;
 }
 
 void

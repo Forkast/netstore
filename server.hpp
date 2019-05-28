@@ -37,6 +37,8 @@ private:
 		char buf[MAX_UDP];
 		int size;
 		bool sent;
+		bool conn;
+		bool todel;
 	};
 
 	// socket, timeout, file name, command
@@ -47,7 +49,7 @@ private:
 	void index_files();
 	void join_broadcast();
 	void read_and_parse();
-	void send_file(Socket & sock);
+	int send_file(Socket & sock);
 	void read_file(Socket & sock);
 	int open_file(const char * name, int flags);
 	void push_commands(const std::string & buf, sockaddr_in remote);

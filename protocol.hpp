@@ -192,12 +192,12 @@ public:
 class ConnectMeCmd : public CmplxCmd
 {
 public:
-	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name, const uint64_t port)
+	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name)
 		: CmplxCmd{s, remote}
 	{ //TODO: tak naprawdę tu będziemy chcieli wysłać zapytanie do reszty wezłów o istnienie takiego pliku.
 		// jesli istnieje to tamten wezel sie zglosi do klienta :D
 		strncpy(_cmd, CONNECT_ME, CMD_LEN);
-		_param = port;
+		_param = ntohs(remote.sin_port);
 		memcpy(_data, file_name.c_str(), file_name.size());
 		_data[file_name.size()] = '\0';
 	}
