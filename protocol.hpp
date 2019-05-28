@@ -27,6 +27,8 @@ using namespace std;
 #define syserr(x) {cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl; \
 exit(0);}
 
+#define prnterr(x) cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl;
+
 class Command {
 protected:
 	char _cmd[CMD_LEN];
@@ -92,10 +94,9 @@ public:
 		uint64_t temp = htobe64(_cmd_seq);
 		memcpy(buf + offset, &temp, sizeof temp);
 		offset += sizeof temp;
-		memcpy(buf + offset, _data, MAX_BUF);
+		memcpy(buf + offset, _data, MAX_UDP - offset);
 		if (sendto(sock, buf, MAX_UDP, 0, (const sockaddr *)&_addr, sizeof _addr) < 0)
 			syserr("sendto");
-		cout << "wyslane : " << buf << endl;
 		cout << "na adres : " << inet_ntoa(_addr.sin_addr) << endl;
 	}
 };
@@ -108,7 +109,7 @@ public: //TODO pusty konstruktor
 			  const std::unordered_set <std::string>::iterator & files_end)
 		: SimplCmd{s, remote}
 	{
-		memcpy(_cmd, MY_LIST, strlen(MY_LIST));
+		strncpy(_cmd, MY_LIST, CMD_LEN);
 		size_t size = MAX_BUF;
 		size_t offset = 0;
 		while (file_names_it != files_end) {
@@ -130,7 +131,9 @@ class GetCmd : public SimplCmd
 public:
 	GetCmd(const string & s, sockaddr_in remote)
 		: SimplCmd{s, remote}
-	{}
+	{
+		strncpy(_cmd, GET, CMD_LEN);
+	}
 
 	const char * file_name()
 	{
@@ -147,7 +150,6 @@ public:
 	CmplxCmd(const string & s, sockaddr_in remote)
 		: Command{s, remote}
 	{
-		sscanf(s.c_str() + CMD_LEN + sizeof _cmd_seq, "%lu", &_cmd_seq);
 		int offset = CMD_LEN + sizeof _cmd_seq + sizeof _param;
 		memcpy(_data, s.c_str() + offset, s.size() - offset);
 		_data[s.size() + offset] = '\0';
@@ -157,7 +159,6 @@ public:
 
 	virtual void send(int sock)
 	{
-		cout << "ASDASDASDASDASDASDASDA" << endl;
 		uint8_t buf[MAX_UDP];
 		int offset = 0;
 		memcpy(buf, _cmd, CMD_LEN);
@@ -168,12 +169,11 @@ public:
 		temp = htobe64(_param);
 		memcpy(buf + offset, &temp, sizeof temp);
 		offset += sizeof temp;
-		memcpy(buf + offset, _data, MAX_BUF);
+		memcpy(buf + offset, _data, MAX_UDP - offset);
 		offset += strlen(_data);
 		int a = 0;
 		if ((a = sendto(sock, (char *)buf, offset, 0, (const sockaddr*)&_addr, sizeof _addr)) < 0)
 			syserr("sendto");
-		cout << "AFTER SENDTO : " << a << endl;
 	}
 };
 
@@ -183,6 +183,7 @@ public:
 	GoodDayCmd(const string & s, sockaddr_in remote, const string & mcast_addr, uint64_t size_left)
 		: CmplxCmd{s, remote}
 	{
+		strncpy(_cmd, GOOD_DAY, CMD_LEN);
 		_param = size_left;
 		memcpy(_data, mcast_addr.c_str(), mcast_addr.size());
 	}
@@ -191,9 +192,12 @@ public:
 class ConnectMeCmd : public CmplxCmd
 {
 public:
-	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name)
+	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name, const uint64_t port)
 		: CmplxCmd{s, remote}
-	{
+	{ //TODO: tak naprawdę tu będziemy chcieli wysłać zapytanie do reszty wezłów o istnienie takiego pliku.
+		// jesli istnieje to tamten wezel sie zglosi do klienta :D
+		strncpy(_cmd, CONNECT_ME, CMD_LEN);
+		_param = port;
 		memcpy(_data, file_name.c_str(), file_name.size());
 		_data[file_name.size()] = '\0';
 	}

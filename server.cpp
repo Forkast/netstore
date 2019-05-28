@@ -16,7 +16,7 @@
 using namespace std;
 using namespace std::filesystem;
 
-uint64_t max(uint64_t, uint64_t);
+int64_t maks(int64_t, int64_t);
 
 Server::Server(const string & mcast_addr,
 			   in_port_t cmd_port,
@@ -50,10 +50,21 @@ Server::run()
 
 	FD_ZERO(&wfds);
 	for (auto const & p : _data_socks) {
-		if (p.socket > max)
-			max = p.socket;
-		FD_SET(p.socket, &wfds);
-		cout << "set writing tcp socket" << endl;
+		if (p.sent) {
+			if (p.file > max)
+				max = p.file;
+			FD_SET(p.file, &rfds);
+			cout << "set reading socket" << endl;
+		} else {// czytam tylko jak poprzednia paczka została wysłana
+			sockaddr addr;
+			socklen_t len = sizeof addr;
+			if (getpeername(p.socket, &addr, &len) == 0) {
+				if (p.socket > max)
+					max = p.socket;
+				FD_SET(p.socket, &wfds);
+				cout << "set writing tcp socket" << endl;
+			} // TODO: usuwamy po timeoucie
+		}
 // 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac milisekundy
 // 			timeout = p.timeout;
 	}
@@ -84,13 +95,19 @@ Server::run()
 // 			cmd->getCmd();
 		}
 		if (FD_ISSET(_sock, &wfds)) {
+			cout << "writing on udp" << endl;
 			string buf;
 			auto cmd = _cmd_queue.front();
 			_cmd_queue.pop();
 			cmd->send(_sock);
 		}
-		for (auto const & p : _data_socks) {
+		for (auto & p : _data_socks) {
+			if (FD_ISSET(p.file, &rfds)) {
+				cout << "we can read from the file" << endl;
+				read_file(p);
+			}
 			if (FD_ISSET(p.socket, &wfds)) {
+				cout << "socket is open so im sending!" << endl;
 				send_file(p);
 			}
 		}
@@ -139,22 +156,33 @@ void
 Server::push_commands(const string & buf, sockaddr_in remote_addr)
 {
 	if (!strncmp(buf.c_str(), HELLO, strlen(HELLO))) {
+		uint64_t space_left;
+		if (_space_used > _max_space)
+			space_left = 0;
+		else
+			space_left = _max_space - _space_used;
 		_cmd_queue.push(shared_ptr <Command> {new GoodDayCmd{buf,
 															  remote_addr,
 															  _mcast_addr,
-															  max(_max_space - _space_used, 0)}});
+															  space_left}});
 	} else if (!strncmp(buf.c_str(), LIST, strlen(LIST))) {
 		auto files_it = _files.begin(); //TODO: obsluga wyszukiwania
 		while (files_it != _files.end())
 			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{buf, remote_addr, files_it, _files.end()}});
 	} else if (!strncmp(buf.c_str(), GET, strlen(GET))) {
 		GetCmd get_cmd{buf, remote_addr};
-		_cmd_queue.push(shared_ptr <Command> (new ConnectMeCmd{buf, remote_addr, string(get_cmd.file_name())}));
-		Socket socket;
-		socket.stream = shared_ptr <ifstream> (new ifstream(get_cmd.file_name()));
-		socket.start_time = std::chrono::system_clock::now();
-		open_tcp_port(socket);
-		_data_socks.push_back(socket);
+		Socket sock;
+		sock.file = open_file(get_cmd.file_name(), O_RDONLY); // brak pliku?
+		if (sock.file < 0)
+			syserr("opening file");
+		sock.sent = true;
+		sock.start_time = std::chrono::system_clock::now();
+		open_tcp_port(sock);
+		_data_socks.push_back(sock);
+		_cmd_queue.push(shared_ptr <Command> (new ConnectMeCmd{buf,
+													remote_addr,
+													string(get_cmd.file_name()),
+													(uint64_t)sock.socket}));
 	} else if (!strncmp(buf.c_str(), DEL, strlen(DEL))) {
 		
 	} else if (!strncmp(buf.c_str(), ADD, strlen(ADD))) {
@@ -167,13 +195,13 @@ Server::open_tcp_port(Socket & sock)
 {
 	sockaddr_in local_address;
 	sock.socket = socket(AF_INET, SOCK_STREAM, 0);
-	socklen_t len;
+	socklen_t len = sizeof local_address;
 
 	local_address.sin_family = AF_INET;
 	local_address.sin_addr.s_addr = INADDR_ANY;
 	local_address.sin_port = 0;
 
-	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof(local_address)) < 0)
+	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof local_address) < 0)
 		syserr("bind");
 
 	if (getsockname(sock.socket, (struct sockaddr *)&local_address, &len) < 0)
@@ -181,6 +209,8 @@ Server::open_tcp_port(Socket & sock)
 
 	fcntl(sock.socket, F_SETFL, O_NONBLOCK);
 	cout << "nowy port to " << local_address.sin_port << endl;
+
+	connect(sock.socket, (struct sockaddr *)&local_address, sizeof local_address);
 }
 
 /* Jeśli serwer otrzyma polecenie dodania pliku lub pobrania pliku, to powinien otworzyć nowe gniazdo TCP na losowym wolnym porcie przydzielonym przez system operacyjny i port ten przekazać w odpowiedzi węzłowi klienckiemu. Serwer oczekuje maksymalnie TIMEOUT sekund na nawiązanie połączenia przez klienta i jeśli takie nie nastąpi, to port TCP powinien zostać niezwłocznie zamknięty. Serwer w czasie oczekiwania na podłączenie się klienta i podczas przesyłania pliku powinien obsługiwać także inne zapytania od klientów.*/
@@ -192,12 +222,38 @@ Server::read_and_parse()
 }
 
 void
-Server::send_file(Socket socket)
+Server::send_file(Socket & sock)
 {
-	
+	int a = send(sock.socket, sock.buf, sock.size, 0);
+	if (a < 0)
+		prnterr("sending file");
+	sock.sent = true;
+	sock.size = 0;
 }
 
-inline uint64_t max(uint64_t a, uint64_t b)
+void
+Server::read_file(Socket & sock)
+{
+	int a = read(sock.file, sock.buf, MAX_UDP);
+	if (a < 0)
+		prnterr("reading file");
+	sock.sent = false;
+	sock.size = a;
+}
+
+int
+Server::open_file(const char * name, int flags)
+{
+	for (auto f : _files) {
+		if (!f.compare(name)) {
+			cout << "opening: " << _directory + "/" + f << endl;
+			return open((_directory + "/" + f).c_str(), flags);
+		}
+	}
+	return -1;
+}
+
+inline int64_t maks(int64_t a, int64_t b)
 {
 	return a > b ? a : b;
 }

@@ -32,8 +32,11 @@ private:
 	struct Socket {
 		int socket;
 		std::chrono::system_clock::time_point start_time;
-		std::shared_ptr <std::ifstream> stream; // TODO:deskryptory plikow :/
-		int cmd;
+		int file;
+		int cmd; // 0 - read, 1 - write
+		char buf[MAX_UDP];
+		int size;
+		bool sent;
 	};
 
 	// socket, timeout, file name, command
@@ -44,7 +47,9 @@ private:
 	void index_files();
 	void join_broadcast();
 	void read_and_parse();
-	void send_file(Socket socket);
+	void send_file(Socket & sock);
+	void read_file(Socket & sock);
+	int open_file(const char * name, int flags);
 	void push_commands(const std::string & buf, sockaddr_in remote);
 	void open_tcp_port(Socket & socket);
 };
