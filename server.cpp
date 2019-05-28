@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <memory>
 #include <string.h>
 #include <sys/select.h>
@@ -11,11 +12,11 @@
 #include <iostream>
 #include <unistd.h>
 
-#define syserr(x) {cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl; \
-exit(0);}
 
 using namespace std;
 using namespace std::filesystem;
+
+uint64_t max(uint64_t, uint64_t);
 
 Server::Server(const string & mcast_addr,
 			   in_port_t cmd_port,
@@ -40,7 +41,7 @@ Server::~Server()
 void
 Server::run()
 {
-	fd_set rfds, wfds;;
+	fd_set rfds, wfds;
 
 	FD_ZERO(&rfds);
 	FD_SET(_sock, &rfds);
@@ -52,8 +53,14 @@ Server::run()
 		if (p.socket > max)
 			max = p.socket;
 		FD_SET(p.socket, &wfds);
-		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac milisekundy
-			timeout = p.timeout;
+		cout << "set writing tcp socket" << endl;
+// 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac milisekundy
+// 			timeout = p.timeout;
+	}
+
+	if (!_cmd_queue.empty()) {
+		cout << "is not empty" << endl;
+		FD_SET(_sock, &wfds);
 	}
 
 	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
@@ -63,14 +70,24 @@ Server::run()
 		//for (//wywalic przeterminowane sockety
 	} else {
 		if (FD_ISSET(_sock, &rfds)) {
-			sockaddr remote_addr;
-			socklen_t socklen;
-			char buf[Command::MAX];
-			int len = recvfrom(_sock, buf, Command::MAX, 0, &remote_addr, &socklen); //recvfrom
-			cout << "przeczytalem " << len << " bajtow" << endl;
-			auto cmd = shared_ptr<Command>(get_command(string(buf)));
-			getCmdSeq(cmd);
-			cmd->getCmd();
+			sockaddr_in remote_addr;
+			socklen_t socklen = sizeof remote_addr;
+			char b[MAX_UDP];
+			int len = recvfrom(_sock, b, MAX_UDP, 0, (sockaddr *) &remote_addr, &socklen);
+			remote_addr.sin_family = AF_INET;
+			string buf = string(b, len);
+			push_commands(buf, remote_addr);
+			for (auto i : buf) {
+				cout << hex << (uint8_t)i;
+			}
+			cout << endl;
+// 			cmd->getCmd();
+		}
+		if (FD_ISSET(_sock, &wfds)) {
+			string buf;
+			auto cmd = _cmd_queue.front();
+			_cmd_queue.pop();
+			cmd->send(_sock);
 		}
 		for (auto const & p : _data_socks) {
 			if (FD_ISSET(p.socket, &wfds)) {
@@ -85,7 +102,7 @@ Server::index_files()
 {
 	for (directory_entry const & f : directory_iterator(_directory)) {
 		if (f.is_regular_file()) {
-// 			_files.insert(f);
+			_files.insert(f.path().filename());
 			_space_used += f.file_size();
 		}
 	}
@@ -99,7 +116,6 @@ Server::join_broadcast()
 	sockaddr_in local_address;
 	ip_mreq ip_mreq;
 	_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	cout << _sock << endl;
 	if (_sock < 0)
 		syserr("socket");
 
@@ -118,33 +134,53 @@ Server::join_broadcast()
 		syserr("bind");
 }
 
-Command *
-Server::get_command(const string & buf)
+
+void
+Server::push_commands(const string & buf, sockaddr_in remote_addr)
 {
-	if (!buf.compare(HELLO)) {
-		return new HelloCmd{};
-	} else if (!buf.compare(LIST)) {
-		return new ListCmd{};
-	} else if (!buf.compare(GET)) {
-		return new GetCmd{};
-	} else if (!buf.compare(DEL)) {
-		return new DelCmd{};
-	} else if (!buf.compare(ADD)) {
-		return new AddCmd{};
-	} else {
-		return nullptr;
+	if (!strncmp(buf.c_str(), HELLO, strlen(HELLO))) {
+		_cmd_queue.push(shared_ptr <Command> {new GoodDayCmd{buf,
+															  remote_addr,
+															  _mcast_addr,
+															  max(_max_space - _space_used, 0)}});
+	} else if (!strncmp(buf.c_str(), LIST, strlen(LIST))) {
+		auto files_it = _files.begin(); //TODO: obsluga wyszukiwania
+		while (files_it != _files.end())
+			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{buf, remote_addr, files_it, _files.end()}});
+	} else if (!strncmp(buf.c_str(), GET, strlen(GET))) {
+		GetCmd get_cmd{buf, remote_addr};
+		_cmd_queue.push(shared_ptr <Command> (new ConnectMeCmd{buf, remote_addr, string(get_cmd.file_name())}));
+		Socket socket;
+		socket.stream = shared_ptr <ifstream> (new ifstream(get_cmd.file_name()));
+		socket.start_time = std::chrono::system_clock::now();
+		open_tcp_port(socket);
+		_data_socks.push_back(socket);
+	} else if (!strncmp(buf.c_str(), DEL, strlen(DEL))) {
+		
+	} else if (!strncmp(buf.c_str(), ADD, strlen(ADD))) {
+		
 	}
 }
 
 void
-Server::getCmdSeq(shared_ptr<Command> &cmd)
+Server::open_tcp_port(Socket & sock)
 {
-	sockaddr remote_addr;
-	socklen_t socklen;
-	uint64_t seq;
-	recvfrom(_sock, &seq, sizeof seq, 0, &remote_addr, &socklen);
-	cout << hex << seq << endl;
-	cmd->setNetworkSeq(seq);
+	sockaddr_in local_address;
+	sock.socket = socket(AF_INET, SOCK_STREAM, 0);
+	socklen_t len;
+
+	local_address.sin_family = AF_INET;
+	local_address.sin_addr.s_addr = INADDR_ANY;
+	local_address.sin_port = 0;
+
+	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof(local_address)) < 0)
+		syserr("bind");
+
+	if (getsockname(sock.socket, (struct sockaddr *)&local_address, &len) < 0)
+		syserr("getsockname");
+
+	fcntl(sock.socket, F_SETFL, O_NONBLOCK);
+	cout << "nowy port to " << local_address.sin_port << endl;
 }
 
 /* Jeśli serwer otrzyma polecenie dodania pliku lub pobrania pliku, to powinien otworzyć nowe gniazdo TCP na losowym wolnym porcie przydzielonym przez system operacyjny i port ten przekazać w odpowiedzi węzłowi klienckiemu. Serwer oczekuje maksymalnie TIMEOUT sekund na nawiązanie połączenia przez klienta i jeśli takie nie nastąpi, to port TCP powinien zostać niezwłocznie zamknięty. Serwer w czasie oczekiwania na podłączenie się klienta i podczas przesyłania pliku powinien obsługiwać także inne zapytania od klientów.*/
@@ -159,6 +195,11 @@ void
 Server::send_file(Socket socket)
 {
 	
+}
+
+inline uint64_t max(uint64_t a, uint64_t b)
+{
+	return a > b ? a : b;
 }
 
 /* non blocking connect with timeout

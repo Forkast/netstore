@@ -1,9 +1,12 @@
 #pragma once
+#include <arpa/inet.h>
 #include <endian.h>
 #include <cstdint>
 #include <cstring>
 #include <ios>
 #include <iostream>
+#include <unordered_set>
+#include <sys/types.h>
 
 using namespace std;
 
@@ -17,150 +20,181 @@ using namespace std;
 #define CONNECT_ME "CONNECT_ME"
 #define ADD "ADD"
 #define CAN_ADD "CAN_ADD"
+#define MAX_UDP 512
+#define CMD_LEN 10
+#define MAX_BUF MAX_UDP - CMD_LEN - 16
+
+#define syserr(x) {cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl; \
+exit(0);}
 
 class Command {
-public:
-	const static int MAX = 10;
 protected:
-	char cmd[Command::MAX];
-	uint64_t cmd_seq;
-	char data[];
+	char _cmd[CMD_LEN];
+	uint64_t _cmd_seq;
+	char * _data;
+	sockaddr_in _addr;
+
+	Command(const std::string & s, sockaddr_in remote)
+	{
+		memcpy(_cmd, s.c_str(), CMD_LEN);
+		uint64_t temp = *(uint64_t *)(s.c_str() + CMD_LEN);
+		setNetworkSeq(temp);
+		_data = new char[MAX_BUF];
+		setAddr(remote);
+	}
 
 public:
-	virtual ~Command() {};
+	virtual ~Command()
+	{
+		delete[] _data;
+		_data = nullptr;
+	}
+
 	void getCmd() {
-		for (int i = 0; i < MAX; i++) {
-			cout << std::hex << (uint8_t)cmd[i];
+		for (int i = 0; i < CMD_LEN; i++) {
+			cout << std::hex << (uint8_t)_cmd[i];
 		}
 		cout << endl;
-		cout << hex << cmd_seq << endl;
+		cout << hex << _cmd_seq << endl;
 	}
+
 	void setNetworkSeq(uint64_t seq) {
 // htobe64();
-		cmd_seq = be64toh(seq);
+		_cmd_seq = be64toh(seq);
 	}
+
+	void setAddr(sockaddr_in remote) {
+		_addr = remote;
+	}
+
+	virtual void send(int sock) = 0;
 };
 
 class SimplCmd : public Command
 {
 public:
-	SimplCmd()
+	SimplCmd(const string & s, sockaddr_in remote)
+		: Command{s, remote}
 	{
-		for (int i = 0; i < Command::MAX; i++) {
-			cmd[i] = '\0';
+		int offset = CMD_LEN + sizeof _cmd_seq;
+		memcpy(_data, s.c_str() + offset, s.size() - offset);
+		_data[s.size() + offset] = '\0';
+	}
+
+	virtual ~SimplCmd() {}
+
+	virtual void send(int sock)
+	{
+		uint8_t buf[MAX_UDP];
+		int offset = 0;
+		memcpy(buf, _cmd, CMD_LEN);
+		offset += CMD_LEN;
+		uint64_t temp = htobe64(_cmd_seq);
+		memcpy(buf + offset, &temp, sizeof temp);
+		offset += sizeof temp;
+		memcpy(buf + offset, _data, MAX_BUF);
+		if (sendto(sock, buf, MAX_UDP, 0, (const sockaddr *)&_addr, sizeof _addr) < 0)
+			syserr("sendto");
+		cout << "wyslane : " << buf << endl;
+		cout << "na adres : " << inet_ntoa(_addr.sin_addr) << endl;
+	}
+};
+
+class MyListCmd : public SimplCmd
+{
+public: //TODO pusty konstruktor
+	MyListCmd(const std::string & s, sockaddr_in remote,
+			  std::unordered_set <std::string>::iterator & file_names_it,
+			  const std::unordered_set <std::string>::iterator & files_end)
+		: SimplCmd{s, remote}
+	{
+		memcpy(_cmd, MY_LIST, strlen(MY_LIST));
+		size_t size = MAX_BUF;
+		size_t offset = 0;
+		while (file_names_it != files_end) {
+			if ((*file_names_it).size() + 1 < size) {
+				memcpy(_data + offset, (*file_names_it).c_str(), (*file_names_it).size());
+				_data[offset + (*file_names_it).size()] = '\n';
+				size -= (*file_names_it).size() + 1;
+				offset += (*file_names_it).size() + 1;
+			} else {
+				break;
+			}
+			++file_names_it;
 		}
 	}
-	virtual ~SimplCmd() {};
-	virtual void send() {}; //TODO pure
 };
 
-// Rozpoznawanie listy serwerów w grupie - zapytanie
-class HelloCmd : public SimplCmd
-{
-public:
-	HelloCmd()
-	: SimplCmd{}
-	{
-		strcpy(cmd, HELLO);
-	}
-};
-
-class ListCmd : public SimplCmd
-{
-public:
-	ListCmd()
-	: SimplCmd{}
-	{
-		strcpy(cmd, LIST);
-	}
-};
-
-class MyCmd : public SimplCmd
-{
-public:
-	MyCmd()
-	: SimplCmd{}
-	{
-		strcpy(cmd, MY_LIST);
-	}
-};
-
-// Pobieranie pliku z serwera
 class GetCmd : public SimplCmd
 {
 public:
-	GetCmd()
-	: SimplCmd{}
+	GetCmd(const string & s, sockaddr_in remote)
+		: SimplCmd{s, remote}
+	{}
+
+	const char * file_name()
 	{
-		strcpy(cmd, GET);
+		return _data;
 	}
 };
-
-// Usuwanie pliku z serwera
-class DelCmd : public SimplCmd
-{
-public:
-	DelCmd()
-	: SimplCmd{}
-	{
-		strcpy(cmd, DEL);
-	}
-};
-
-class NWCmd : public SimplCmd
-{
-public:
-	NWCmd()
-	: SimplCmd{}
-	{
-		strcpy(cmd, NO_WAY);
-	}
-};
-
 
 class CmplxCmd : public Command
 {
-};
+protected:
+	uint64_t _param;
 
-// Rozpoznawanie listy serwerów w grupie - odpowiedz
-class GoodCmd : public CmplxCmd
-{
 public:
-	GoodCmd()
-	: CmplxCmd{}
+	CmplxCmd(const string & s, sockaddr_in remote)
+		: Command{s, remote}
 	{
-		strcpy(cmd, GOOD_DAY); 
+		sscanf(s.c_str() + CMD_LEN + sizeof _cmd_seq, "%lu", &_cmd_seq);
+		int offset = CMD_LEN + sizeof _cmd_seq + sizeof _param;
+		memcpy(_data, s.c_str() + offset, s.size() - offset);
+		_data[s.size() + offset] = '\0';
+	}
+
+	virtual ~CmplxCmd() {}
+
+	virtual void send(int sock)
+	{
+		cout << "ASDASDASDASDASDASDASDA" << endl;
+		uint8_t buf[MAX_UDP];
+		int offset = 0;
+		memcpy(buf, _cmd, CMD_LEN);
+		offset += CMD_LEN;
+		uint64_t temp = htobe64(_cmd_seq);
+		memcpy(buf + offset, &temp, sizeof temp);
+		offset += sizeof temp;
+		temp = htobe64(_param);
+		memcpy(buf + offset, &temp, sizeof temp);
+		offset += sizeof temp;
+		memcpy(buf + offset, _data, MAX_BUF);
+		offset += strlen(_data);
+		int a = 0;
+		if ((a = sendto(sock, (char *)buf, offset, 0, (const sockaddr*)&_addr, sizeof _addr)) < 0)
+			syserr("sendto");
+		cout << "AFTER SENDTO : " << a << endl;
 	}
 };
 
-// 
-class ConnCmd : public CmplxCmd
+class GoodDayCmd : public CmplxCmd
 {
 public:
-	ConnCmd()
-	: CmplxCmd{}
+	GoodDayCmd(const string & s, sockaddr_in remote, const string & mcast_addr, uint64_t size_left)
+		: CmplxCmd{s, remote}
 	{
-		strcpy(cmd, CONNECT_ME);
+		_param = size_left;
+		memcpy(_data, mcast_addr.c_str(), mcast_addr.size());
 	}
 };
 
-// Dodawanie pliku do grupy
-class AddCmd : public CmplxCmd
+class ConnectMeCmd : public CmplxCmd
 {
 public:
-	AddCmd()
-	: CmplxCmd{}
+	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name)
+		: CmplxCmd{s, remote}
 	{
-		strcpy(cmd, ADD);
-	}
-};
-
-class CanCmd : public CmplxCmd
-{
-public:
-	CanCmd()
-	: CmplxCmd{}
-	{
-		strcpy(cmd, CAN_ADD);
+		memcpy(_data, file_name.c_str(), file_name.size());
+		_data[file_name.size()] = '\0';
 	}
 };
