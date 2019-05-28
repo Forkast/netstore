@@ -69,6 +69,11 @@ public:
 		_addr = remote;
 	}
 
+	uint64_t getCmdSeq()
+	{
+		return _cmd_seq;
+	}
+
 	virtual void send(int sock) = 0;
 };
 
@@ -79,7 +84,7 @@ public:
 		: Command{s, remote}
 	{
 		int offset = CMD_LEN + sizeof _cmd_seq;
-		memcpy(_data, s.c_str() + offset, s.size() - offset);
+		strncpy(_data, s.c_str() + offset, MAX_BUF);
 		_data[s.size() + offset] = '\0';
 	}
 
@@ -141,6 +146,32 @@ public:
 	}
 };
 
+class DelCmd : public SimplCmd
+{
+public:
+	DelCmd(const string & s, sockaddr_in remote)
+		: SimplCmd{s, remote}
+	{
+		strncpy(_cmd, DEL, CMD_LEN);
+	}
+
+	const char * file_name()
+	{
+		return _data;
+	}
+};
+
+class NoWayCmd : public SimplCmd
+{
+public:
+	NoWayCmd(const string & s, sockaddr_in remote, const string & filename)
+		: SimplCmd{s, remote}
+	{
+		strncpy(_cmd, NO_WAY, CMD_LEN);
+		strncpy(_data, filename.c_str(), MAX_BUF);
+	}
+};
+
 class CmplxCmd : public Command
 {
 protected:
@@ -150,6 +181,8 @@ public:
 	CmplxCmd(const string & s, sockaddr_in remote)
 		: Command{s, remote}
 	{
+		uint64_t temp = *(uint64_t *)(s.c_str() + CMD_LEN);
+		_param = be64toh(temp);
 		int offset = CMD_LEN + sizeof _cmd_seq + sizeof _param;
 		memcpy(_data, s.c_str() + offset, s.size() - offset);
 		_data[s.size() + offset] = '\0';
@@ -180,7 +213,7 @@ public:
 class GoodDayCmd : public CmplxCmd
 {
 public:
-	GoodDayCmd(const string & s, sockaddr_in remote, const string & mcast_addr, uint64_t size_left)
+	GoodDayCmd(const std::string & s, sockaddr_in remote, const string & mcast_addr, uint64_t size_left)
 		: CmplxCmd{s, remote}
 	{
 		strncpy(_cmd, GOOD_DAY, CMD_LEN);
@@ -192,13 +225,43 @@ public:
 class ConnectMeCmd : public CmplxCmd
 {
 public:
-	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name)
+	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name, int port)
 		: CmplxCmd{s, remote}
 	{ //TODO: tak naprawdę tu będziemy chcieli wysłać zapytanie do reszty wezłów o istnienie takiego pliku.
 		// jesli istnieje to tamten wezel sie zglosi do klienta :D
 		strncpy(_cmd, CONNECT_ME, CMD_LEN);
-		_param = ntohs(remote.sin_port);
+		_param = ntohs(port);
 		memcpy(_data, file_name.c_str(), file_name.size());
 		_data[file_name.size()] = '\0';
 	}
 };
+
+class AddCmd : public CmplxCmd
+{
+public:
+	AddCmd(const std::string & s, sockaddr_in remote)
+		: CmplxCmd{s, remote}
+	{
+		
+	}
+
+	uint64_t requested_size()
+	{
+		return _param;
+	}
+
+	const char * file_name()
+	{
+		return _data;
+	}
+};
+
+class CanAddCmd : public CmplxCmd
+{
+public:
+	CanAddCmd(const std::string & s, sockaddr_in remote, uint64_t port)
+	{
+		strncpy(_cmd, CAN_ADD, CMD_LEN);
+		_param = ntohs(port);
+	}
+}

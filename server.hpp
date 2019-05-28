@@ -12,6 +12,9 @@
 #include <unordered_set>
 #include <vector>
 
+#define READ 0
+#define WRITE 1
+
 class Server
 {
 public:
@@ -22,7 +25,7 @@ public:
 private:
 	std::string _mcast_addr;
 	in_port_t _cmd_port;
-	std::string _directory;
+	std::filesystem::path _directory;
 	unsigned _max_space;
 	unsigned _space_used;
 	timeval _timeout;
@@ -52,6 +55,8 @@ private:
 	int send_file(Socket & sock);
 	void read_file(Socket & sock);
 	int open_file(const char * name, int flags);
+	void delete_file(const char * name);
 	void push_commands(const std::string & buf, sockaddr_in remote);
-	void open_tcp_port(Socket & socket);
+	int open_tcp_port(Socket & socket, int flag);
+	uint64_t space_left();
 };
