@@ -50,28 +50,37 @@ Server::run()
 
 	FD_ZERO(&wfds);
 	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
-		if (p.cmd == READ) {
+		if (!p.conn) {
+			if (p.socket > max)
+				max = p.socket;
+			FD_SET(p.socket, &rfds);
+			cout << "set accepting TCP socket" << endl;
+		} else if (p.cmd == READ) {
 			if (p.sent) {
 				if (p.file > max)
 					max = p.file;
 				FD_SET(p.file, &rfds);
-				cout << "set reading socket" << endl;
+				cout << "set reading file" << endl;
 			} else {// czytam tylko jak poprzednia paczka została wysłana
 				if (p.socket > max)
 					max = p.socket;
-				if (p.conn) {
-					FD_SET(p.socket, &wfds);
-					cout << "set writing tcp socket" << endl;
-				} else {
-					FD_SET(p.socket, &rfds);
-					cout << "set reading TCP socket" << endl;
-				}
-				// TODO: usuwamy po timeoucie
+				FD_SET(p.socket, &wfds);
+				cout << "set writing tcp socket" << endl;
 			}
-		} else {
-			
+		} else if (p.cmd == WRITE) {
+			if (p.sent) {
+				if (p.file > max)
+					max = p.file;
+				FD_SET(p.file, &wfds);
+				cout << "set writing file" << endl;
+			} else {
+				if (p.socket > max)
+					max = p.socket;
+				FD_SET(p.socket, &rfds);
+				cout << "set reading tcp socket" << endl;
+			}
 		}
-// 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac milisekundy
+// 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac timeout
 // 			timeout = p.timeout;
 	}
 
@@ -84,7 +93,7 @@ Server::run()
 	cout << "select out\n";
 
 	if (a == 0) {
-		//for (//wywalic przeterminowane sockety
+		//for (//wywalic przeterminowane sockety TODO
 	} else {
 		if (FD_ISSET(_sock, &rfds)) {
 			sockaddr_in remote_addr;
@@ -112,15 +121,26 @@ Server::run()
 				cout << "we can read from the file" << endl;
 				read_file(p);
 			}
+			if (FD_ISSET(p.file, &wfds)) {
+				cout << "we can read from the file" << endl;
+				int a = write_file(p);
+				if (a < 0) {
+					p.todel = true;
+				}
+			}
 			if (FD_ISSET(p.socket, &rfds)) {
-				cout << "time to accept connection" << endl;
-				sockaddr_in addr;
-				socklen_t len = sizeof addr;
-				int s = accept(p.socket, (sockaddr *) &addr, &len);
-				cout << "connection from: " << inet_ntoa(addr.sin_addr) << ":" << dec << ntohs(addr.sin_port) << endl;
-				close(p.socket);
-				p.socket = s;
-				p.conn = true;
+				if (!p.conn) {
+					cout << "time to accept connection" << endl;
+					sockaddr_in addr;
+					socklen_t len = sizeof addr;
+					int s = accept(p.socket, (sockaddr *) &addr, &len);
+					cout << "connection from: " << inet_ntoa(addr.sin_addr) << ":" << dec << ntohs(addr.sin_port) << endl;
+					close(p.socket);
+					p.socket = s;
+					p.conn = true;
+				} else {
+					recv_file(p);
+				}
 			}
 			if (FD_ISSET(p.socket, &wfds)) {
 				cout << "socket is open so im sending!" << endl;
@@ -299,6 +319,30 @@ Server::delete_file(const char * name)
 		remove(_directory / name);
 		_files.erase(name);
 	}
+}
+
+void
+Server::recv_file(Socket & sock)
+{
+	int a = recv(sock.socket, sock.buf, MAX_UDP, 0);
+	if (a < 0)
+		prnterr("receiving file");
+	sock.sent = true;
+	sock.size = a;
+}
+
+int
+Server::write_file(Socket & sock)
+{
+	if (sock.size == 0) {
+		return -1;
+	}
+	int a = write(sock.file, sock.buf, sock.size);
+	if (a < 0)
+		prnterr("writing file");
+	sock.sent = false;
+	sock.size = 0;
+	return 1;
 }
 
 uint64_t

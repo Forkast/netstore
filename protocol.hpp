@@ -260,8 +260,9 @@ class CanAddCmd : public CmplxCmd
 {
 public:
 	CanAddCmd(const std::string & s, sockaddr_in remote, uint64_t port)
+		: CmplxCmd{s, remote}
 	{
 		strncpy(_cmd, CAN_ADD, CMD_LEN);
 		_param = ntohs(port);
 	}
-}
+};

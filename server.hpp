@@ -37,7 +37,7 @@ private:
 		std::chrono::system_clock::time_point start_time;
 		int file;
 		int cmd; // 0 - read, 1 - write
-		char buf[MAX_UDP];
+		char buf[MAX_UDP]; //partial send?
 		int size;
 		bool sent;
 		bool conn;
@@ -56,6 +56,8 @@ private:
 	void read_file(Socket & sock);
 	int open_file(const char * name, int flags);
 	void delete_file(const char * name);
+	void recv_file(Socket & sock);
+	int write_file(Socket & sock);
 	void push_commands(const std::string & buf, sockaddr_in remote);
 	int open_tcp_port(Socket & socket, int flag);
 	uint64_t space_left();
