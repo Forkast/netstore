@@ -15,7 +15,8 @@
 #define READ 0
 #define WRITE 1
 
-class Server
+//TODO sygnaly!
+class Server //TODO: komunikaty o błędach
 {
 public:
 	Server(const std::string&, in_port_t, const std::string&, unsigned int = 52428800, int = 5);

@@ -5,12 +5,16 @@ project(sikajnamnie)
 #include_directories(include)
 
 #Can manually add the sources using the set command as follows:
-#set(SOURCES server.cpp protocol.cpp)
+set(SERVER_SOURCES server.cpp netstore-server.cpp)
+set(CLIENT_SOURCES client.cpp netstore-client.cpp)
 
 #However, the file(GLOB...) allows for wildcard additions:
-file(GLOB SOURCES "*.cpp")
+#file(GLOB SOURCES "*server*.cpp")
 
-
-add_executable(server ${SOURCES})
+add_executable(server ${SERVER_SOURCES})
 set_property(TARGET server PROPERTY CXX_STANDARD 17)
 target_link_libraries(server stdc++fs)
+
+add_executable(client ${CLIENT_SOURCES})
+set_property(TARGET client PROPERTY CXX_STANDARD 17)
+target_link_libraries(client stdc++fs)

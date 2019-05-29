@@ -44,11 +44,11 @@ Server::run()
 	fd_set rfds, wfds;
 
 	FD_ZERO(&rfds);
+	FD_ZERO(&wfds);
 	FD_SET(_sock, &rfds);
 	int max = _sock;
-	timeval timeout = _timeout;
+	timeval timeout = _timeout; //TODO: jakis sensowny timeout
 
-	FD_ZERO(&wfds);
 	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
 		if (!p.conn) {
 			if (p.socket > max)
