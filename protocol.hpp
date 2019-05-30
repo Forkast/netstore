@@ -22,6 +22,7 @@ using namespace std;
 #define CAN_ADD "CAN_ADD"
 #define MAX_UDP 512
 #define CMD_LEN 10
+#define BUF_SIZE MAX_UDP + 1
 #define MAX_BUF MAX_UDP - CMD_LEN - 16
 
 #define syserr(x) {cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl; \
@@ -41,8 +42,17 @@ protected:
 		memcpy(_cmd, s.c_str(), CMD_LEN);
 		uint64_t temp = *(uint64_t *)(s.c_str() + CMD_LEN);
 		setNetworkSeq(temp);
-		_data = new char[MAX_BUF];
+		_data = new char[BUF_SIZE];
+		memset(_data, 0, BUF_SIZE);
 		setAddr(remote);
+	}
+
+	Command(sockaddr_in remote, uint64_t cmd_seq)
+	{
+		_data = new char[BUF_SIZE];
+		memset(_data, 0, BUF_SIZE);
+		setAddr(remote);
+		_cmd_seq = cmd_seq;
 	}
 
 public:
@@ -85,7 +95,13 @@ public:
 	{
 		int offset = CMD_LEN + sizeof _cmd_seq;
 		strncpy(_data, s.c_str() + offset, MAX_BUF);
-		_data[s.size() + offset] = '\0';
+		_data[s.size()] = '\0';
+	}
+
+	SimplCmd(sockaddr_in remote, uint64_t cmd_seq)
+		: Command{remote, cmd_seq}
+	{
+		
 	}
 
 	virtual ~SimplCmd() {}
@@ -102,7 +118,32 @@ public:
 		memcpy(buf + offset, _data, MAX_UDP - offset);
 		if (sendto(sock, buf, MAX_UDP, 0, (const sockaddr *)&_addr, sizeof _addr) < 0)
 			syserr("sendto");
-		cout << "na adres : " << inet_ntoa(_addr.sin_addr) << endl;
+		cout << "na adres : " << inet_ntoa(_addr.sin_addr) << ":" << ntohs(_addr.sin_port) << endl;
+	}
+};
+
+class HelloCmd : public SimplCmd
+{
+public:
+	HelloCmd(const string & s, sockaddr_in remote)
+		: SimplCmd{s, remote}
+	{
+		strncpy(_cmd, HELLO, CMD_LEN);
+	}
+	HelloCmd(sockaddr_in remote, uint64_t cmd_seq)
+		: SimplCmd{remote, cmd_seq}
+	{
+		strncpy(_cmd, HELLO, CMD_LEN);
+	}
+};
+
+class ListCmd : public SimplCmd
+{
+public:
+	ListCmd(sockaddr_in remote, uint64_t cmd_seq)
+		: SimplCmd{remote, cmd_seq}
+	{
+		strncpy(_cmd, LIST, CMD_LEN);
 	}
 };
 
@@ -128,6 +169,15 @@ public: //TODO pusty konstruktor
 			}
 			++file_names_it;
 		}
+	}
+
+	MyListCmd(const std::string & s, sockaddr_in remote)
+		: SimplCmd{s, remote}
+	{}
+
+	char * getFileList()
+	{
+		return _data;
 	}
 };
 
@@ -181,11 +231,12 @@ public:
 	CmplxCmd(const string & s, sockaddr_in remote)
 		: Command{s, remote}
 	{
-		uint64_t temp = *(uint64_t *)(s.c_str() + CMD_LEN);
+		int offset = CMD_LEN + sizeof _cmd_seq;
+		uint64_t temp = *(uint64_t *)(s.c_str() + offset);
 		_param = be64toh(temp);
-		int offset = CMD_LEN + sizeof _cmd_seq + sizeof _param;
+		offset += sizeof _param;
 		memcpy(_data, s.c_str() + offset, s.size() - offset);
-		_data[s.size() + offset] = '\0';
+		_data[s.size()] = '\0';
 	}
 
 	virtual ~CmplxCmd() {}
@@ -207,6 +258,10 @@ public:
 		int a = 0;
 		if ((a = sendto(sock, (char *)buf, offset, 0, (const sockaddr*)&_addr, sizeof _addr)) < 0)
 			syserr("sendto");
+		for (int i = 0; i < offset; i++) {
+			cout << hex << buf[i] ;
+		}
+		cout << endl;
 	}
 };
 
@@ -219,6 +274,20 @@ public:
 		strncpy(_cmd, GOOD_DAY, CMD_LEN);
 		_param = size_left;
 		memcpy(_data, mcast_addr.c_str(), mcast_addr.size());
+	}
+
+	GoodDayCmd(const std::string & s, sockaddr_in remote)
+		: CmplxCmd{s, remote}
+	{}
+
+	uint64_t getSizeLeft()
+	{
+		return _param;
+	}
+
+	const char * getMCastAddr()
+	{
+		return _data;
 	}
 };
 

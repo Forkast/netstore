@@ -101,6 +101,7 @@ Server::run()
 			char b[MAX_UDP];
 			int len = recvfrom(_sock, b, MAX_UDP, 0, (sockaddr *) &remote_addr, &socklen);
 			remote_addr.sin_family = AF_INET;
+			cout << "przeczytane " << len << " bajtow" << endl;
 			string buf = string(b, len);
 			push_commands(buf, remote_addr);
 			for (auto i : buf) {
@@ -160,6 +161,7 @@ Server::run()
 void
 Server::index_files()
 {
+	_space_used = 0;
 	for (directory_entry const & f : directory_iterator(_directory)) {
 		if (f.is_regular_file()) {
 			_files.insert(f.path().filename());

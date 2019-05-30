@@ -2,7 +2,7 @@
 
 int main()
 {
-	Client client("", 1337, "tmp", 5);
+	Client client("239.10.11.12", 1337, "tmp", 5);
 	
 	while (true)
 		client.run();
