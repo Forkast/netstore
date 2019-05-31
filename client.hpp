@@ -8,7 +8,7 @@ class Client
 {
 public:
 	Client(const std::string & mcast_addr, in_port_t cmd_port, const std::string & directory, int timeout);
-	void run();
+	int run();
 
 private:
 	std::string _mcast_addr;
@@ -18,9 +18,13 @@ private:
 	int _udp_sock;
 	uint64_t _cmd_seq;
 	sockaddr_in _multicast;
+	bool _exit;
+
+	std::vector <Socket> _data_socks;
+	std::queue <std::shared_ptr <Command> > _cmd_queue;
 
 private:
 	void parse_command(const std::string & buf);
 	void open_udp_sock();
-	void costamzrob(int param, const std::string & name);
+	void syncronous_command(int param, const std::string & name);
 };

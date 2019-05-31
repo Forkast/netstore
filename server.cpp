@@ -16,6 +16,15 @@
 using namespace std;
 using namespace std::filesystem;
 
+namespace {
+	std::sig_atomic_t exit_program;
+}
+
+void signal_handler(int signal)
+{
+	exit_program = signal;
+}
+
 int64_t maks(int64_t, int64_t);
 
 Server::Server(const string & mcast_addr,
@@ -38,7 +47,7 @@ Server::~Server()
 	close(_sock);
 }
 
-void
+int
 Server::run()
 {
 	fd_set rfds, wfds;
@@ -89,8 +98,10 @@ Server::run()
 		FD_SET(_sock, &wfds);
 	}
 
+	if (exit_program != 0) return 0;
 	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
-	cout << "select out\n";
+	if (exit_program != 0) return 0;
+	cout << "select out " << exit_program << endl;;
 
 	if (a == 0) {
 		//for (//wywalic przeterminowane sockety TODO
@@ -112,7 +123,6 @@ Server::run()
 		}
 		if (FD_ISSET(_sock, &wfds)) {
 			cout << "writing on udp" << endl;
-			string buf;
 			auto cmd = _cmd_queue.front();
 			_cmd_queue.pop();
 			cmd->send(_sock);
@@ -156,6 +166,7 @@ Server::run()
 						[](const Socket & s) { return s.todel; }),
 			_data_socks.end());
 	}
+	return 1;
 }
 
 void

@@ -30,6 +30,20 @@ exit(0);}
 
 #define prnterr(x) cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl;
 
+
+
+struct Socket { //TODO wydzielic do oddzielnego i uzyc w kliencie
+	int socket;
+	std::chrono::system_clock::time_point start_time;
+	int file;
+	int cmd; // 0 - read, 1 - write
+	char buf[MAX_UDP];
+	int size;
+	bool sent;
+	bool conn;
+	bool todel;
+};
+
 class Command {
 protected:
 	char _cmd[CMD_LEN];
@@ -100,9 +114,7 @@ public:
 
 	SimplCmd(sockaddr_in remote, uint64_t cmd_seq)
 		: Command{remote, cmd_seq}
-	{
-		
-	}
+	{}
 
 	virtual ~SimplCmd() {}
 
@@ -190,6 +202,13 @@ public:
 		strncpy(_cmd, GET, CMD_LEN);
 	}
 
+	GetCmd(sockaddr_in remote, uint64_t cmd_seq, const std::string & filename)
+		: SimplCmd{remote, cmd_seq}
+	{
+		strncpy(_cmd, GET, CMD_LEN);
+		memcpy(_data, filename.c_str(), filename.size());
+	}
+
 	const char * file_name()
 	{
 		return _data;
@@ -238,6 +257,10 @@ public:
 		memcpy(_data, s.c_str() + offset, s.size() - offset);
 		_data[s.size()] = '\0';
 	}
+
+	CmplxCmd(sockaddr_in remote, uint64_t cmd_seq)
+		: Command{remote, cmd_seq}
+	{}
 
 	virtual ~CmplxCmd() {}
 
@@ -311,7 +334,15 @@ public:
 	AddCmd(const std::string & s, sockaddr_in remote)
 		: CmplxCmd{s, remote}
 	{
-		
+		strncpy(_cmd, ADD, CMD_LEN);
+	}
+
+	AddCmd(sockaddr_in remote, uint64_t cmd_seq, uint64_t size, const std::string & filename)
+		: CmplxCmd{remote, cmd_seq}
+	{
+		strncpy(_cmd, ADD, CMD_LEN);
+		_param = size;
+		memcpy(_data, filename.c_str(), filename.size());
 	}
 
 	uint64_t requested_size()

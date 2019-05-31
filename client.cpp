@@ -41,19 +41,27 @@ Client::Client(const string & mcast_addr, in_port_t cmd_port, const string & dir
 	_multicast.sin_family = AF_INET;
 	_multicast.sin_addr.s_addr = inet_addr(_mcast_addr.c_str());
 	_multicast.sin_port = htons(_cmd_port);
+	_exit = false;
 	open_udp_sock();
 }
 
 void
 Client::run()
 {
+	if (_exit) return 0;
 	fd_set rfds, wfds;
 
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);
 	FD_SET(STDIN, &rfds);
 	int max = STDIN;
+	FD_SET(_udp_sock, &rfds);
+	max = max < _udp_sock ? _udp_sock : max;
 	timeval timeout = _timeout;
+
+	if (!_cmd_queue.empty()) {
+		FD_SET(_sock, &wfds);
+	}
 
 	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
 
@@ -65,29 +73,56 @@ Client::run()
 			read(STDIN, buf, MAX_UDP);
 			parse_command(buf);
 		}
+		if (FD_ISSET(_sock, &wfds)) {
+			cout << "writing on udp" << endl;
+			auto cmd = _cmd_queue.front();
+			_cmd_queue.pop();
+			cmd->send(_sock);
+		}
+		if (FD_ISSET(_udp_sock, &rfds)) {
+			sockaddr_in remote;
+			socklen_t len = sizeof remote;
+			char buf[MAX_UDP];
+			int len = recvfrom(_upd_sock, buf, MAX_UDP, 0, (sockaddr *) &remote, &len);
+			parse_response(string(buf, len), remote);
+		}
 	}
+	return 1;
 }
 
 void
 Client::parse_command(const string & buf)
 {
 	if ("discover" /= buf) {
-		costamzrob(1, string());
-	} else if ("search" /= buf) {
-		costamzrob(2, string());
+		syncronous_command(1);
+	} else if ("search" /= buf) { //TODO: wyszukiwanie
+		syncronous_command(2, "");
 	} else if ("fetch" /= buf) {
-		
+		_cmd_queue.push(shared_ptr <Command> {new GetCmd{_multicast,
+														 _cmd_seq,
+														 string()}); //TODO filenames
 	} else if ("upload" /= buf) {
-		
+		_cmd_queue.push(shared_ptr <Command> {new AddCmd{_multicast,
+														 _cmd_seq,
+														 string()}); //TODO filenames
 	} else if ("remove" /= buf) {
 		
 	} else if ("exit" /= buf) {
-		
+		_exit = true;
 	}
 }
 
 void
-Client::costamzrob(int parameter, const string & name)
+Client::parse_response(const string & buf, sockaddr_in remote)
+{
+	Socket sock; //brakuje informacji co ja tak naprawde chcialem wyslac
+	// moze lepiej jednak jest poczekac na wyslanie pakietu
+	open_tcp_sock(sock, remote);
+	_data_socks.push_back(sock);
+}
+
+void
+Client::syncronous_command(int parameter, const string & name = string{})
 {
 	shared_ptr <Command> cmd;
 	if (parameter == 1) {
@@ -103,7 +138,7 @@ Client::costamzrob(int parameter, const string & name)
 	chrono::system_clock::time_point start_time = chrono::time_point_cast<chrono::seconds> (chrono::system_clock::now());
 
 	int a = 1;
-	while (a != 0) {
+	while (a != 0) { // to nadal powinno obslugiwac odbieranie pakietow tcp!
 		auto passed = chrono::time_point_cast<chrono::seconds> (chrono::system_clock::now()) - start_time;
 		timeout.tv_sec -= passed.count() > timeout.tv_sec ? timeout.tv_sec : passed.count();
 		a = select(_udp_sock + 1, &rfds, nullptr, nullptr, &timeout);
@@ -115,17 +150,34 @@ Client::costamzrob(int parameter, const string & name)
 				int a = recvfrom(_udp_sock, buf, MAX_UDP, 0, (sockaddr *) &remote_addr, &len);
 				cout << "przeczytano " << a << " bajtow" << endl;
 				string s(buf, a);
+
+				/* jesli przyszly inne odpowiedzi to ich nie chcemy */
+				if (!(GOOD_DAY /= string(buf, CMD_LEN)
+					|| MY_LIST /= string(buf, CMD_LEN)))
+					continue;
+
 				if (parameter == 1) {
 					GoodDayCmd gdcmd{s, remote_addr};
+
+/* wypisywanie odpowiedzi */
 					cout << "Found "
 						<< inet_ntoa(remote_addr.sin_addr)
 						<< "("
 						<< gdcmd.getMCastAddr()
 						<< ") with free space "
 						<< gdcmd.getSizeLeft() << endl;
+/* koniec */
 				} else {
 					MyListCmd mlcmd{s, remote_addr};
-					cout << mlcmd.getFileList() << endl;
+					std::string filename;
+					std::istringstream tokenStream(mlcmd.getFileList());
+
+/* wypisywanie odpowiedzi */
+					while (std::getline(tokenStream, filename))
+					{
+						cout << filename << " (" << inet_ntoa(remote_addr.sin_addr) << ")" << endl;
+					}
+/* koniec */
 				}
 			}
 		}
@@ -147,7 +199,26 @@ Client::open_udp_sock()
 		syserr("bind");
 }
 
-/* https://stackoverflow.com/questions/11635/case-insensitive-string-comparison-in-c
+void
+Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr)
+{
+	sock.sent = true;
+	sock.cmd = flag;
+	sockaddr_in local_address;
+	sock.socket = socket(AF_INET, SOCK_STREAM, 0);
+	socklen_t len = sizeof local_address;
+
+	local_address.sin_family = AF_INET;
+	local_address.sin_addr.s_addr = htonl(INADDR_ANY);
+	local_address.sin_port = 0;
+
+	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof local_address) < 0)
+		syserr("bind");
+
+	connect(sock.socket, (sockaddr *) &remote, sizeof remote);
+}
+
+/*
 discover - synchronous
 
 	Found 10.1.1.28 (239.10.11.12) with free space 23456

@@ -2,6 +2,7 @@
 #include "protocol.hpp"
 
 #include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -15,13 +16,14 @@
 #define READ 0
 #define WRITE 1
 
-//TODO sygnaly!
+void signal_handler(int signal);
+
 class Server //TODO: komunikaty o błędach
 {
 public:
 	Server(const std::string&, in_port_t, const std::string&, unsigned int = 52428800, int = 5);
 	~Server();
-	void run();
+	int run();
 
 private:
 	std::string _mcast_addr;
@@ -32,18 +34,6 @@ private:
 	timeval _timeout;
 	std::unordered_set <std::string> _files;
 	int _sock;
-
-	struct Socket {
-		int socket;
-		std::chrono::system_clock::time_point start_time;
-		int file;
-		int cmd; // 0 - read, 1 - write
-		char buf[MAX_UDP]; //partial send?
-		int size;
-		bool sent;
-		bool conn;
-		bool todel;
-	};
 
 	// socket, timeout, file name, command
 	std::vector <Socket> _data_socks;
