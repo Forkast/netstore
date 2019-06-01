@@ -1,7 +1,6 @@
 #pragma once
 #include "protocol.hpp"
 
-#include <chrono>
 #include <csignal>
 #include <filesystem>
 #include <fstream>
@@ -12,9 +11,6 @@
 #include <time.h>
 #include <unordered_set>
 #include <vector>
-
-#define READ 0
-#define WRITE 1
 
 void signal_handler(int signal);
 
@@ -42,13 +38,8 @@ private:
 private:
 	void index_files();
 	void join_broadcast();
-	void read_and_parse();
-	int send_file(Socket & sock);
-	void read_file(Socket & sock);
 	int open_file(const char * name, int flags);
 	void delete_file(const char * name);
-	void recv_file(Socket & sock);
-	int write_file(Socket & sock);
 	void push_commands(const std::string & buf, sockaddr_in remote);
 	int open_tcp_port(Socket & socket, int flag);
 	uint64_t space_left();

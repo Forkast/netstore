@@ -101,7 +101,7 @@ Server::run()
 	if (exit_program != 0) return 0;
 	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
 	if (exit_program != 0) return 0;
-	cout << "select out " << exit_program << endl;;
+	cout << "select out " << endl;
 
 	if (a == 0) {
 		//for (//wywalic przeterminowane sockety TODO
@@ -136,7 +136,7 @@ Server::run()
 				cout << "we can read from the file" << endl;
 				int a = write_file(p);
 				if (a < 0) {
-					p.todel = true;
+					todel(p);
 				}
 			}
 			if (FD_ISSET(p.socket, &rfds)) {
@@ -157,7 +157,7 @@ Server::run()
 				cout << "socket is open so im sending!" << endl;
 				int a = send_file(p);
 				if (a < 0) {
-					p.todel = true;
+					todel(p);
 				}
 			}
 		}
@@ -235,7 +235,8 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 		delete_file(cmd.file_name());
 	} else if (!strncmp(buf.c_str(), ADD, strlen(ADD))) {
 		AddCmd cmd{buf, remote_addr};
-		if (cmd.requested_size() > space_left()) {
+		if (cmd.requested_size() > space_left()
+			|| string(cmd.file_name()).find('/') != string::npos) {
 			_cmd_queue.push(shared_ptr <Command> (new NoWayCmd{buf,
 														remote_addr,
 														cmd.file_name()}));
@@ -279,37 +280,6 @@ Server::open_tcp_port(Socket & sock, int flag)
 	return ntohs(local_address.sin_port);
 }
 
-void
-Server::read_and_parse()
-{
-	// commands: Hello -> GoodDay, List -> MyList, Get -> Connect_me, Del -> null, Add -> no_way / can_add
-	
-}
-
-int
-Server::send_file(Socket & sock)
-{
-	if (sock.size == 0) {
-		return -1;
-	}
-	int a = send(sock.socket, sock.buf, sock.size, 0);
-	if (a < 0)
-		prnterr("sending file");
-	sock.sent = true;
-	sock.size = 0;
-	return 1;
-}
-
-void
-Server::read_file(Socket & sock)
-{
-	int a = read(sock.file, sock.buf, MAX_UDP);
-	if (a < 0)
-		prnterr("reading file");
-	sock.sent = false;
-	sock.size = a;
-}
-
 int
 Server::open_file(const char * name, int flags)
 {
@@ -332,30 +302,6 @@ Server::delete_file(const char * name)
 		remove(_directory / name);
 		_files.erase(name);
 	}
-}
-
-void
-Server::recv_file(Socket & sock)
-{
-	int a = recv(sock.socket, sock.buf, MAX_UDP, 0);
-	if (a < 0)
-		prnterr("receiving file");
-	sock.sent = true;
-	sock.size = a;
-}
-
-int
-Server::write_file(Socket & sock)
-{
-	if (sock.size == 0) {
-		return -1;
-	}
-	int a = write(sock.file, sock.buf, sock.size);
-	if (a < 0)
-		prnterr("writing file");
-	sock.sent = false;
-	sock.size = 0;
-	return 1;
 }
 
 uint64_t

@@ -5,8 +5,8 @@ project(sikajnamnie)
 #include_directories(include)
 
 #Can manually add the sources using the set command as follows:
-set(SERVER_SOURCES server.cpp netstore-server.cpp)
-set(CLIENT_SOURCES client.cpp netstore-client.cpp)
+set(SERVER_SOURCES server.cpp netstore-server.cpp protocol.cpp)
+set(CLIENT_SOURCES client.cpp netstore-client.cpp protocol.cpp)
 
 #However, the file(GLOB...) allows for wildcard additions:
 #file(GLOB SOURCES "*server*.cpp")

@@ -1,16 +1,20 @@
 #include "client.hpp"
-#include "protocol.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <memory>
 #include <unistd.h>
 #include <sys/socket.h>
 
 using namespace std;
+using namespace std::filesystem;
+using namespace std::chrono;
 
 #define STDIN 0
 
 //TODO: walidacja cmd_seq
-//TODO: double discover
+//TODO: program raczej nie powinien wychodzic na bledzie
+//TODO: czy plik ktory chcialem wyslac to ten ktory serwer chce odebrac?
 
 bool operator/=(const string & s1, const string & s2)
 {
@@ -42,10 +46,13 @@ Client::Client(const string & mcast_addr, in_port_t cmd_port, const string & dir
 	_multicast.sin_addr.s_addr = inet_addr(_mcast_addr.c_str());
 	_multicast.sin_port = htons(_cmd_port);
 	_exit = false;
+	_current_dir = current_path();
+	_stdin_lock = {0, 0};
+	_locked = false;
 	open_udp_sock();
 }
 
-void
+int
 Client::run()
 {
 	if (_exit) return 0;
@@ -53,135 +60,260 @@ Client::run()
 
 	FD_ZERO(&rfds);
 	FD_ZERO(&wfds);
-	FD_SET(STDIN, &rfds);
-	int max = STDIN;
-	FD_SET(_udp_sock, &rfds);
-	max = max < _udp_sock ? _udp_sock : max;
-	timeval timeout = _timeout;
+	int max = 0;
 
-	if (!_cmd_queue.empty()) {
-		FD_SET(_sock, &wfds);
+	timeval * timeout = nullptr;
+	if (!_locked) {
+		FD_SET(STDIN, &rfds);
+	} else {// NOTE: sie nie kompiluje
+		int64_t passed = time_point_cast <seconds> (_lock_time
+													- system_clock::now()
+													).count();
+		if (passed > _timeout.tv_sec)
+			_stdin_lock.tv_sec = 0;	
+		else
+			_stdin_lock.tv_sec = _timeout.tv_sec - passed;
+		timeout = &_stdin_lock;
 	}
 
-	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
+	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
+		if (p.cmd == READ) {
+			if (p.sent) {
+				if (p.file > max)
+					max = p.file;
+				FD_SET(p.file, &rfds);
+				cout << "set reading file" << endl;
+			} else {
+				if (p.socket > max)
+					max = p.socket;
+				FD_SET(p.socket, &wfds);
+				cout << "set writing tcp socket" << endl;
+			}
+		} else if (p.cmd == WRITE) {
+			if (p.sent) {
+				if (p.file > max)
+					max = p.file;
+				FD_SET(p.file, &wfds);
+				cout << "set writing file" << endl;
+			} else {
+				if (p.socket > max)
+					max = p.socket;
+				FD_SET(p.socket, &rfds);
+				cout << "set reading tcp socket" << endl;
+			}
+		}
+
+	FD_SET(_udp_sock, &rfds);
+	max = max < _udp_sock ? _udp_sock : max;
+
+	if (!_cmd_queue.empty()) {
+		FD_SET(_udp_sock, &wfds);
+	}
+	//NOTE: odrzucenie przeterminowanych. timeout
+
+	int a = select(max + 1, &rfds, &wfds, nullptr, timeout);
 
 	if (a == 0) {
-		
+		_locked = false;
 	} else {
 		if (FD_ISSET(STDIN, &rfds)) {
 			char buf[MAX_UDP];
 			read(STDIN, buf, MAX_UDP);
 			parse_command(buf);
 		}
-		if (FD_ISSET(_sock, &wfds)) {
-			cout << "writing on udp" << endl;
+		if (FD_ISSET(_udp_sock, &wfds)) {
 			auto cmd = _cmd_queue.front();
 			_cmd_queue.pop();
-			cmd->send(_sock);
+			cmd->send(_udp_sock);
 		}
 		if (FD_ISSET(_udp_sock, &rfds)) {
 			sockaddr_in remote;
 			socklen_t len = sizeof remote;
 			char buf[MAX_UDP];
-			int len = recvfrom(_upd_sock, buf, MAX_UDP, 0, (sockaddr *) &remote, &len);
-			parse_response(string(buf, len), remote);
+			int a = recvfrom(_udp_sock, buf, MAX_UDP, 0, (sockaddr *) &remote, &len);
+			parse_response(string(buf, a), remote);
 		}
+		for (auto & p : _data_socks) {
+			if (FD_ISSET(p.file, &rfds)) {
+				cout << "we can read from the file" << endl;
+				read_file(p);
+			}
+			if (FD_ISSET(p.file, &wfds)) {
+				cout << "we can write to the file" << endl;
+				int a = write_file(p);
+				if (a < 0) {
+					todel(p);
+				}
+			}
+			if (FD_ISSET(p.socket, &rfds)) {
+				recv_file(p);
+			}
+			if (FD_ISSET(p.socket, &wfds)) {
+				cout << "socket is open so im sending!" << endl;
+				int a = send_file(p);
+				if (a < 0) {
+					todel(p);
+				}
+			}
+		}
+		_data_socks.erase(
+			std::remove_if(_data_socks.begin(), _data_socks.end(),
+						[](const Socket & s) { return s.todel; }),
+			_data_socks.end());
 	}
 	return 1;
 }
+
+// cmd
+// sscanf(buf.substr(buf.find() + cmd.size(), buf.size()), "%s", &filename);
 
 void
 Client::parse_command(const string & buf)
 {
 	if ("discover" /= buf) {
+		_servers.clear();
 		syncronous_command(1);
-	} else if ("search" /= buf) { //TODO: wyszukiwanie
-		syncronous_command(2, "");
+	} else if ("search" /= buf) {
+		string cmd("search");
+		char filename[MAX_BUF];
+		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
+		syncronous_command(2, filename);
 	} else if ("fetch" /= buf) {
-		_cmd_queue.push(shared_ptr <Command> {new GetCmd{_multicast,
-														 _cmd_seq,
-														 string()}); //TODO filenames
-	} else if ("upload" /= buf) {
-		_cmd_queue.push(shared_ptr <Command> {new AddCmd{_multicast,
-														 _cmd_seq,
-														 string()}); //TODO filenames
+		cout << "fetching" << endl;
+		string cmd("fetch");
+		char filename[MAX_BUF];
+		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
+		if (_listed_filenames.find(filename) != _listed_filenames.end()) {
+			_cmd_queue.push(shared_ptr <Command> {new GetCmd{_multicast,
+															_cmd_seq,
+															filename}});
+		} else {
+			cout << "nie znaleziono w liscie pliku : " << filename << endl;
+		}
+	} else if ("upload" /= buf) { //find the file
+		string cmd("upload");
+		char filename[MAX_BUF];
+		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
+		uint64_t size = 0;
+		AddCmd * cmd = nullptr;
+		path file;
+		if (!_servers.empty()) { //musi się zmieścić
+			sockaddr_in best;
+			for (const auto & serv : _servers) {
+				if (serv.first > size) {
+					best = serv.second
+					break;
+				}
+			}
+			if (filename[0] == '/' && is_regular_file(filename)) {
+				file = filename;
+				cmd = new AddCmd{best, _cmd_seq, size, file.filename()}
+			} else if (is_regular_file(_current_dir / filename)) {
+				file = _current_dir / filename;
+				cmd = new AddCmd{best, _cmd_seq, size, file.filename()}
+			}
+		}
+		// TODO: a potem do następnego który ma miejsce
+		if (cmd != nullptr) {
+			_cmd_queue.push(shared_ptr <Command> {cmd});
+			_add_queue.insert(make_pair(shared_ptr <Command> {cmd}, file));
+		}
 	} else if ("remove" /= buf) {
-		
+		string cmd("remove");
+		char filename[MAX_BUF];
+		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
+		if (strlen(filename) != 0) {
+			_cmd_queue.push(shared_ptr <Command> {new DelCmd{_multicast,
+															_cmd_seq,
+															filename}});
+		}
 	} else if ("exit" /= buf) {
 		_exit = true;
 	}
 }
 
 void
-Client::parse_response(const string & buf, sockaddr_in remote)
+Client::parse_response(const string & buf, sockaddr_in remote_addr)
 {
-	Socket sock; //brakuje informacji co ja tak naprawde chcialem wyslac
-	// moze lepiej jednak jest poczekac na wyslanie pakietu
-	open_tcp_sock(sock, remote);
-	_data_socks.push_back(sock);
+	if (SimplCmd{buf}._cmd_seq != _cmd_seq)
+		return;
+	if (!strncmp(buf.c_str(), GOOD_DAY, strlen(GOOD_DAY))) {
+		GoodCmd cmd{buf, remote_addr};
+
+		_servers.insert(std::pair <uint64_t, sockaddr_in> {gdcmd.getSizeLeft(), remote_addr});
+		cout << "Found "
+			<< inet_ntoa(remote_addr.sin_addr)
+			<< "("
+			<< gdcmd.getMCastAddr()
+			<< ") with free space "
+			<< gdcmd.getSizeLeft() << endl;
+	} else if (!strncmp(buf.c_str(), MY_LIST, strlen(MY_LIST))) {
+		MyListCmd cmd{buf, remote_addr};
+		std::string filename;
+		std::istringstream tokenStream(mlcmd.getFileList());
+
+		while (std::getline(tokenStream, filename))
+		{
+			_listed_filenames.insert(filename);
+			cout << filename << " (" << inet_ntoa(remote_addr.sin_addr) << ")" << endl;
+		}
+	} else if (!strncmp(buf.c_str(), CONNECT_ME, strlen(CONNECT_ME))) {
+		ConnectMeCmd cmd{buf, remote_addr};
+
+		for (const auto & it = _get_queue.begin(); it != _get_queue.end(); it++) {
+			if (string{cmd->file_name()}.compare((*it)->file_name())) {
+
+				Socket sock;
+				sockaddr_in new_remote;
+				remote.sin_addr = remote_addr.sin_addr;
+				remote.sin_port = cmd.port();
+				sock.cmd = READ;
+				sock.file = open(_directory / name).c_str(), O_WRONLY);
+				open_tcp_sock(sock, new_remote, 0); //TODO obsluga socketow tcp
+				_data_socks.push_back(sock);
+
+				_get_queue.erase(it);
+				break;
+			}
+		}
+
+	} else if (!strncmp(buf.c_str(), NO_WAY, strlen(NO_WAY))) {
+		NWCmd cmd{buf, remote_addr}; //TODO: sprobowac z nastepnym
+	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
+		CanAddCmd cmd{buf, remote_addr};
+
+		for (const auto & it = _add_queue.begin(); it != _add_queue.end(); it++) {
+			if (string{cmd->file_name()}.compare((*it).first->file_name())) {
+	
+				Socket sock;
+				sockaddr_in new_remote;
+				remote.sin_addr = remote_addr.sin_addr;
+				remote.sin_port = cmd.port();
+				sock.cmd = WRITE;
+				sock.file = open(string((*it).second).c_str(), O_RDONLY);
+				open_tcp_sock(sock, new_remote, 0); //TODO obsluga socketow tcp
+				_data_socks.push_back(sock);
+
+				_add_queue.erase(it);
+				break;
+			}
+		}
+
+	}
 }
 
 void
-Client::syncronous_command(int parameter, const string & name = string{})
+Client::syncronous_command(int parameter, const string & name)
 {
-	shared_ptr <Command> cmd;
 	if (parameter == 1) {
-		cmd = shared_ptr <Command> (new HelloCmd{_multicast, _cmd_seq});
+		_cmd_queue.push(shared_ptr <Command> {new HelloCmd{_multicast, _cmd_seq}});
 	} else {
-		cmd = shared_ptr <Command> (new ListCmd{_multicast, _cmd_seq});
+		_cmd_queue.push(shared_ptr <Command> {new ListCmd{_multicast, _cmd_seq}});
+		_listed_filenames.clear();
 	}
-	cmd->send(_udp_sock);
-	fd_set rfds;
-	FD_ZERO(&rfds);
-	FD_SET(_udp_sock, &rfds);
-	timeval timeout = _timeout;
-	chrono::system_clock::time_point start_time = chrono::time_point_cast<chrono::seconds> (chrono::system_clock::now());
-
-	int a = 1;
-	while (a != 0) { // to nadal powinno obslugiwac odbieranie pakietow tcp!
-		auto passed = chrono::time_point_cast<chrono::seconds> (chrono::system_clock::now()) - start_time;
-		timeout.tv_sec -= passed.count() > timeout.tv_sec ? timeout.tv_sec : passed.count();
-		a = select(_udp_sock + 1, &rfds, nullptr, nullptr, &timeout);
-		if (a != 0) {
-			if (FD_ISSET(_udp_sock, &rfds)) {
-				sockaddr_in remote_addr;
-				socklen_t len = sizeof remote_addr;
-				char buf[MAX_UDP];
-				int a = recvfrom(_udp_sock, buf, MAX_UDP, 0, (sockaddr *) &remote_addr, &len);
-				cout << "przeczytano " << a << " bajtow" << endl;
-				string s(buf, a);
-
-				/* jesli przyszly inne odpowiedzi to ich nie chcemy */
-				if (!(GOOD_DAY /= string(buf, CMD_LEN)
-					|| MY_LIST /= string(buf, CMD_LEN)))
-					continue;
-
-				if (parameter == 1) {
-					GoodDayCmd gdcmd{s, remote_addr};
-
-/* wypisywanie odpowiedzi */
-					cout << "Found "
-						<< inet_ntoa(remote_addr.sin_addr)
-						<< "("
-						<< gdcmd.getMCastAddr()
-						<< ") with free space "
-						<< gdcmd.getSizeLeft() << endl;
-/* koniec */
-				} else {
-					MyListCmd mlcmd{s, remote_addr};
-					std::string filename;
-					std::istringstream tokenStream(mlcmd.getFileList());
-
-/* wypisywanie odpowiedzi */
-					while (std::getline(tokenStream, filename))
-					{
-						cout << filename << " (" << inet_ntoa(remote_addr.sin_addr) << ")" << endl;
-					}
-/* koniec */
-				}
-			}
-		}
-	}
+	_stdin_lock = _timeout;
+	_lock_time = system_clock::now();
+	_locked = true;
 }
 
 void
@@ -200,7 +332,7 @@ Client::open_udp_sock()
 }
 
 void
-Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr)
+Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flag)
 {
 	sock.sent = true;
 	sock.cmd = flag;
@@ -215,7 +347,7 @@ Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr)
 	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof local_address) < 0)
 		syserr("bind");
 
-	connect(sock.socket, (sockaddr *) &remote, sizeof remote);
+	connect(sock.socket, (sockaddr *) &remote_addr, sizeof remote_addr);
 }
 
 /*
