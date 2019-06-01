@@ -58,6 +58,7 @@ Server::run()
 	int max = _sock;
 	timeval timeout = _timeout; //TODO: jakis sensowny timeout
 
+	cout << "przed wyslaniem size " << _data_socks.size() << endl;
 	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
 		if (!p.conn) {
 			if (p.socket > max)
@@ -243,10 +244,13 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 		} else {
 			Socket sock;
 			sock.file = open_file(cmd.file_name(), O_WRONLY | O_CREAT);
+			if (sock.file < 0)
+				syserr("open");
 			int port = open_tcp_port(sock, WRITE);
 			_cmd_queue.push(shared_ptr <Command> (new CanAddCmd{buf,
 														remote_addr,
 														port}));
+			_data_socks.push_back(sock);
 		}
 	}
 }
@@ -284,7 +288,7 @@ int
 Server::open_file(const char * name, int flags)
 {
 	auto got = _files.find(name);
-	if (got != _files.end()) {
+	if ((flags == O_WRONLY | O_CREAT) || got != _files.end()) {
 		cout << "opening: " << _directory / name << endl;
 		return open((_directory / name).c_str(), flags, 0644);
 	}
