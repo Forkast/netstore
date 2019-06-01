@@ -74,15 +74,18 @@ Client::run()
 			_stdin_lock.tv_sec = _timeout.tv_sec - passed;
 		timeout = &_stdin_lock;
 	}
+	cout << "size przed przegladaniem : " << _data_socks.size() << endl;
 
 	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
 		if (!p.conn) {
 			//NOTE: jesli nie jest polaczony to ustawiam cmd_socket do czytania
 			if (p.sent) {
+				cout << "juz wyslany wiec bede czytac" << endl;
 				if (p.cmd_socket > max)
 					max = p.cmd_socket;
 				FD_SET(p.cmd_socket, &rfds);
 			} else {
+				cout << "bede wysylal na sokcket" << endl;
 				if (p.cmd_socket > max)
 					max = p.cmd_socket;
 				FD_SET(p.cmd_socket, &wfds);
@@ -125,6 +128,7 @@ Client::run()
 	//NOTE: odrzucenie przeterminowanych. timeout
 
 	int a = select(max + 1, &rfds, &wfds, nullptr, timeout);
+// 	cout << "select out" << endl;
 
 	if (a == 0) {
 		_locked = false;
@@ -147,36 +151,39 @@ Client::run()
 			parse_response(string(buf, a), remote);
 		}
 		for (auto & p : _data_socks) { //NOTE: jesli cmd_socket jest do czytania do odbieram i lacze lub nie
-			if (FD_ISSET(p.file, &rfds)) {
-				cout << "we can read from the file" << endl;
-				read_file(p);
-			}
-			if (FD_ISSET(p.file, &wfds)) {
-				cout << "we can write to the file" << endl;
-				int a = write_file(p);
-				if (a < 0) {
-					todel(p);
+			if (!p.conn) {
+				if (FD_ISSET(p.cmd_socket, &rfds)) {
+					sockaddr_in remote;
+					socklen_t len = sizeof remote;
+					char buf[MAX_UDP];
+					int a = recvfrom(p.cmd_socket, buf, MAX_UDP, 0, (sockaddr *) &remote, &len);
+					parse_response_on_socket(string(buf, a), remote, p);
 				}
-			}
-			if (FD_ISSET(p.cmd_socket, &rfds)) {
-				sockaddr_in remote;
-				socklen_t len = sizeof remote;
-				char buf[MAX_UDP];
-				int a = recvfrom(p.cmd_socket, buf, MAX_UDP, 0, (sockaddr *) &remote, &len);
-				parse_response_on_socket(string(buf, a), remote, p);
-			}
-			if (FD_ISSET(p.cmd_socket, &wfds)) {
-				p.connect_cmd->send(p.cmd_socket);
-				p.sent = true;
-			}
-			if (FD_ISSET(p.socket, &rfds)) {
-				recv_file(p);
-			}
-			if (FD_ISSET(p.socket, &wfds)) {
-				cout << "socket is open so im sending!" << endl;
-				int a = send_file(p);
-				if (a < 0) {
-					todel(p);
+				if (FD_ISSET(p.cmd_socket, &wfds)) {
+					p.connect_cmd->send(p.cmd_socket);
+					p.sent = true;
+				}
+			} else {
+				if (FD_ISSET(p.file, &rfds)) {
+					cout << "we can read from the file" << endl;
+					read_file(p);
+				}
+				if (FD_ISSET(p.file, &wfds)) {
+					cout << "we can write to the file" << endl;
+					int a = write_file(p);
+					if (a < 0) {
+						todel(p);
+					}
+				}
+				if (FD_ISSET(p.socket, &rfds)) {
+					recv_file(p);
+				}
+				if (FD_ISSET(p.socket, &wfds)) {
+					cout << "socket is open so im sending!" << endl;
+					int a = send_file(p);
+					if (a < 0) {
+						todel(p);
+					}
 				}
 			}
 		}
@@ -208,13 +215,17 @@ Client::parse_command(const string & buf)
 		char filename[MAX_BUF];//NOTE: tu tworze socket i przydzielam mu conn = false - DONE
 		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
 		if (_listed_filenames.find(filename) != _listed_filenames.end()) {
+			cout << "znaleziono plik : " << filename << endl;
 			Socket sock;
 			sock.conn = false;
 			sock.sent = false;
+			cout << "setting socket to WRITING mode" << endl;
 			sock.connect_cmd = shared_ptr <Command> {new GetCmd{_multicast,
 																_cmd_seq,
 																filename}};
+			open_udp_sock(sock);
 			_data_socks.push_back(sock);
+			cout << "size po wstawieniu : " << _data_socks.size() << endl;
 		} else {
 			cout << "nie znaleziono w liscie pliku : " << filename << endl;
 		}
@@ -230,6 +241,7 @@ Client::parse_command(const string & buf)
 			sockaddr_in best;
 			sock.conn = false;
 			sock.sent = false;
+			cout << "setting socket to READINGmode" << endl;
 			for (const auto & serv : _servers) {
 				if (serv.first > size) {
 					best = serv.second;
@@ -248,6 +260,7 @@ Client::parse_command(const string & buf)
 		}
 		// TODO: a potem do następnego który ma miejsce
 		if (sock.connect_cmd) {
+			open_udp_sock(sock);
 			_data_socks.push_back(sock);
 		}
 	} else if ("remove" /= buf) {
@@ -300,28 +313,32 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 	if (!strncmp(buf.c_str(), CONNECT_ME, strlen(CONNECT_ME))) {
 		ConnectMeCmd cmd{buf, remote_addr}; //NOTE: tutaj natomiast otwieram socket_tcp
 		//ustawiam ze sie polaczylem
+		cout << "no wiec sie polaczylem" << endl;
 
 		sockaddr_in new_remote;
+		new_remote.sin_family = AF_INET;
 		new_remote.sin_addr = remote_addr.sin_addr;
 		new_remote.sin_port = cmd.port();
-		sock.cmd = READ;
-		sock.file = open((_directory / cmd.file_name()).c_str(), O_WRONLY);
+		sock.file = open((_directory / cmd.file_name()).c_str(), O_WRONLY | O_CREAT, 0644);
 		sock.conn = true;
-		open_tcp_sock(sock, new_remote, 0);
+		open_tcp_sock(sock, new_remote, WRITE);
+		close(sock.cmd_socket);
 
 	} else if (!strncmp(buf.c_str(), NO_WAY, strlen(NO_WAY))) {
 		NoWayCmd cmd{buf, remote_addr}; //TODO: sprobowac z nastepnym
 	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
 		CanAddCmd cmd{buf, remote_addr}; //NOTE: tutaj natomiast otwieram socket_tcp
 		//ustawiam ze sie polaczylem
+		cout << "mozna strzelac" << endl;
 
 		sockaddr_in new_remote;
+		new_remote.sin_family = AF_INET;
 		new_remote.sin_addr = remote_addr.sin_addr;
 		new_remote.sin_port = cmd.port();
-		sock.cmd = WRITE;
 		sock.file = open(sock.filename.c_str(), O_RDONLY);
 		sock.conn = true;
-		open_tcp_sock(sock, new_remote, 0);
+		open_tcp_sock(sock, new_remote, READ);
+		close(sock.cmd_socket);
 
 	}
 }
@@ -356,9 +373,25 @@ Client::open_udp_sock()
 }
 
 void
+Client::open_udp_sock(Socket & sock)
+{
+	sockaddr_in local_address;
+	sock.cmd_socket = socket(AF_INET, SOCK_DGRAM, 0);
+	socklen_t len = sizeof local_address;
+	sock.todel = false;
+
+	local_address.sin_family = AF_INET;
+	local_address.sin_addr.s_addr = htonl(INADDR_ANY);
+	local_address.sin_port = 0;
+
+	if (bind(sock.cmd_socket, (struct sockaddr *) &local_address, sizeof local_address) < 0)
+		syserr("bind");
+}
+
+void
 Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flag)
 {
-	sock.sent = true;
+	sock.sent = false;
 	sock.cmd = flag;
 	sockaddr_in local_address;
 	sock.socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -368,10 +401,11 @@ Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flag)
 	local_address.sin_addr.s_addr = htonl(INADDR_ANY);
 	local_address.sin_port = 0;
 
-	if (bind(sock.socket, (struct sockaddr *) &local_address, sizeof local_address) < 0)
+	if (bind(sock.socket, (sockaddr *) &local_address, sizeof local_address) < 0)
 		syserr("bind");
 
-	connect(sock.socket, (sockaddr *) &remote_addr, sizeof remote_addr);
+	if (connect(sock.socket, (sockaddr *) &remote_addr, sizeof remote_addr) < 0)
+		syserr("connect");
 }
 
 /*

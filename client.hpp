@@ -56,6 +56,7 @@ private:
 private:
 	void parse_command(const std::string & buf);
 	void open_udp_sock();
+	void open_udp_sock(Socket & sock);
 	void syncronous_command(int param, const std::string & name = string{});
 	void parse_response(const std::string & buf, sockaddr_in remote);
 	void parse_response_on_socket(const std::string & buf, sockaddr_in remote, Socket & sock);
