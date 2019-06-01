@@ -242,7 +242,7 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 														cmd.file_name()}));
 		} else {
 			Socket sock;
-			sock.file = open_file(cmd.file_name(), O_WRONLY);
+			sock.file = open_file(cmd.file_name(), O_WRONLY | O_CREAT);
 			int port = open_tcp_port(sock, WRITE);
 			_cmd_queue.push(shared_ptr <Command> (new CanAddCmd{buf,
 														remote_addr,
@@ -286,7 +286,7 @@ Server::open_file(const char * name, int flags)
 	auto got = _files.find(name);
 	if (got != _files.end()) {
 		cout << "opening: " << _directory / name << endl;
-		return open((_directory / name).c_str(), flags);
+		return open((_directory / name).c_str(), flags, 0644);
 	}
 	return -1;
 }

@@ -74,7 +74,6 @@ Client::run()
 			_stdin_lock.tv_sec = _timeout.tv_sec - passed;
 		timeout = &_stdin_lock;
 	}
-	cout << "size przed przegladaniem : " << _data_socks.size() << endl;
 
 	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
 		if (!p.conn) {
@@ -225,7 +224,6 @@ Client::parse_command(const string & buf)
 																filename}};
 			open_udp_sock(sock);
 			_data_socks.push_back(sock);
-			cout << "size po wstawieniu : " << _data_socks.size() << endl;
 		} else {
 			cout << "nie znaleziono w liscie pliku : " << filename << endl;
 		}
@@ -245,14 +243,19 @@ Client::parse_command(const string & buf)
 			for (const auto & serv : _servers) {
 				if (serv.first > size) {
 					best = serv.second;
+					cout << "slemy do serwera : " << inet_ntoa(best.sin_addr) << endl;
 					if (filename[0] == '/' && is_regular_file(filename)) {
+						cout << "absolut path! " << filename << endl;
 						file = filename;
+						cout << "file : " << file << endl;
 						sock.connect_cmd = shared_ptr <Command> {new AddCmd{best, _cmd_seq, size, file.filename()}};
-						sock.filename = file.filename();
+						sock.filename = file;
 					} else if (is_regular_file(_current_dir / filename)) {
+						cout << "relative path! " << filename << endl;
 						file = _current_dir / filename;
+						cout << "file : " << file << endl;
 						sock.connect_cmd = shared_ptr <Command> {new AddCmd{best, _cmd_seq, size, file.filename()}};
-						sock.filename = file.filename();
+						sock.filename = file;
 					}
 					break;
 				}
@@ -329,13 +332,16 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
 		CanAddCmd cmd{buf, remote_addr}; //NOTE: tutaj natomiast otwieram socket_tcp
 		//ustawiam ze sie polaczylem
-		cout << "mozna strzelac" << endl;
+		cout << "mozna strzelac " << cmd.port() << endl;
 
 		sockaddr_in new_remote;
 		new_remote.sin_family = AF_INET;
 		new_remote.sin_addr = remote_addr.sin_addr;
 		new_remote.sin_port = cmd.port();
 		sock.file = open(sock.filename.c_str(), O_RDONLY);
+		cout << "opening file " << sock.filename.c_str() << endl;
+		if (sock.file < 0)
+			syserr("canadd open");
 		sock.conn = true;
 		open_tcp_sock(sock, new_remote, READ);
 		close(sock.cmd_socket);
