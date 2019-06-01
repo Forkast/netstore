@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fcntl.h>
 #include <memory>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -66,42 +67,45 @@ Client::run()
 	if (!_locked) {
 		FD_SET(STDIN, &rfds);
 	} else {// NOTE: sie nie kompiluje
-		int64_t passed = time_point_cast <seconds> (_lock_time
-													- system_clock::now()
-													).count();
+		int64_t passed = duration_cast <seconds> (system_clock::now() - _lock_time).count();
 		if (passed > _timeout.tv_sec)
-			_stdin_lock.tv_sec = 0;	
+			_stdin_lock.tv_sec = 0;
 		else
 			_stdin_lock.tv_sec = _timeout.tv_sec - passed;
 		timeout = &_stdin_lock;
 	}
 
 	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
-		if (p.cmd == READ) {
-			if (p.sent) {
-				if (p.file > max)
-					max = p.file;
-				FD_SET(p.file, &rfds);
-				cout << "set reading file" << endl;
-			} else {
-				if (p.socket > max)
-					max = p.socket;
-				FD_SET(p.socket, &wfds);
-				cout << "set writing tcp socket" << endl;
-			}
-		} else if (p.cmd == WRITE) {
-			if (p.sent) {
-				if (p.file > max)
-					max = p.file;
-				FD_SET(p.file, &wfds);
-				cout << "set writing file" << endl;
-			} else {
-				if (p.socket > max)
-					max = p.socket;
-				FD_SET(p.socket, &rfds);
-				cout << "set reading tcp socket" << endl;
+		if (!conn) {
+			
+		} else {
+			if (p.cmd == READ) {
+				if (p.sent) {
+					if (p.file > max)
+						max = p.file;
+					FD_SET(p.file, &rfds);
+					cout << "set reading file" << endl;
+				} else {
+					if (p.socket > max)
+						max = p.socket;
+					FD_SET(p.socket, &wfds);
+					cout << "set writing tcp socket" << endl;
+				}
+			} else if (p.cmd == WRITE) {
+				if (p.sent) {
+					if (p.file > max)
+						max = p.file;
+					FD_SET(p.file, &wfds);
+					cout << "set writing file" << endl;
+				} else {
+					if (p.socket > max)
+						max = p.socket;
+					FD_SET(p.socket, &rfds);
+					cout << "set reading tcp socket" << endl;
+				}
 			}
 		}
+	}
 
 	FD_SET(_udp_sock, &rfds);
 	max = max < _udp_sock ? _udp_sock : max;
@@ -195,28 +199,28 @@ Client::parse_command(const string & buf)
 		char filename[MAX_BUF];
 		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
 		uint64_t size = 0;
-		AddCmd * cmd = nullptr;
+		AddCmd * addCmd = nullptr;
 		path file;
 		if (!_servers.empty()) { //musi się zmieścić
 			sockaddr_in best;
 			for (const auto & serv : _servers) {
 				if (serv.first > size) {
-					best = serv.second
+					best = serv.second;
 					break;
 				}
 			}
 			if (filename[0] == '/' && is_regular_file(filename)) {
 				file = filename;
-				cmd = new AddCmd{best, _cmd_seq, size, file.filename()}
+				addCmd = new AddCmd{best, _cmd_seq, size, file.filename()};
 			} else if (is_regular_file(_current_dir / filename)) {
 				file = _current_dir / filename;
-				cmd = new AddCmd{best, _cmd_seq, size, file.filename()}
+				addCmd = new AddCmd{best, _cmd_seq, size, file.filename()};
 			}
 		}
 		// TODO: a potem do następnego który ma miejsce
-		if (cmd != nullptr) {
-			_cmd_queue.push(shared_ptr <Command> {cmd});
-			_add_queue.insert(make_pair(shared_ptr <Command> {cmd}, file));
+		if (addCmd != nullptr) {
+			_cmd_queue.push(shared_ptr <Command> {addCmd});
+			_add_queue.insert(make_pair(shared_ptr <AddCmd> {addCmd}, file));
 		}
 	} else if ("remove" /= buf) {
 		string cmd("remove");
@@ -235,10 +239,10 @@ Client::parse_command(const string & buf)
 void
 Client::parse_response(const string & buf, sockaddr_in remote_addr)
 {
-	if (SimplCmd{buf}._cmd_seq != _cmd_seq)
+	if (SimplCmd{buf, remote_addr}.getCmdSeq() != _cmd_seq)
 		return;
 	if (!strncmp(buf.c_str(), GOOD_DAY, strlen(GOOD_DAY))) {
-		GoodCmd cmd{buf, remote_addr};
+		GoodDayCmd gdcmd{buf, remote_addr};
 
 		_servers.insert(std::pair <uint64_t, sockaddr_in> {gdcmd.getSizeLeft(), remote_addr});
 		cout << "Found "
@@ -248,7 +252,7 @@ Client::parse_response(const string & buf, sockaddr_in remote_addr)
 			<< ") with free space "
 			<< gdcmd.getSizeLeft() << endl;
 	} else if (!strncmp(buf.c_str(), MY_LIST, strlen(MY_LIST))) {
-		MyListCmd cmd{buf, remote_addr};
+		MyListCmd mlcmd{buf, remote_addr};
 		std::string filename;
 		std::istringstream tokenStream(mlcmd.getFileList());
 
@@ -260,15 +264,15 @@ Client::parse_response(const string & buf, sockaddr_in remote_addr)
 	} else if (!strncmp(buf.c_str(), CONNECT_ME, strlen(CONNECT_ME))) {
 		ConnectMeCmd cmd{buf, remote_addr};
 
-		for (const auto & it = _get_queue.begin(); it != _get_queue.end(); it++) {
-			if (string{cmd->file_name()}.compare((*it)->file_name())) {
+		for (auto it = _get_queue.begin(); it != _get_queue.end(); ++it) {
+			if (string{cmd.file_name()}.compare((*it)->file_name())) {
 
 				Socket sock;
 				sockaddr_in new_remote;
-				remote.sin_addr = remote_addr.sin_addr;
-				remote.sin_port = cmd.port();
+				new_remote.sin_addr = remote_addr.sin_addr;
+				new_remote.sin_port = cmd.port();
 				sock.cmd = READ;
-				sock.file = open(_directory / name).c_str(), O_WRONLY);
+				sock.file = open((_directory / cmd.file_name()).c_str(), O_WRONLY);
 				open_tcp_sock(sock, new_remote, 0); //TODO obsluga socketow tcp
 				_data_socks.push_back(sock);
 
@@ -278,17 +282,17 @@ Client::parse_response(const string & buf, sockaddr_in remote_addr)
 		}
 
 	} else if (!strncmp(buf.c_str(), NO_WAY, strlen(NO_WAY))) {
-		NWCmd cmd{buf, remote_addr}; //TODO: sprobowac z nastepnym
+		NoWayCmd cmd{buf, remote_addr}; //TODO: sprobowac z nastepnym
 	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
 		CanAddCmd cmd{buf, remote_addr};
 
-		for (const auto & it = _add_queue.begin(); it != _add_queue.end(); it++) {
-			if (string{cmd->file_name()}.compare((*it).first->file_name())) {
+		for (auto it = _add_queue.begin(); it != _add_queue.end(); it++) {
+			if (string{cmd.file_name()}.compare((*it).first->file_name())) {
 	
 				Socket sock;
 				sockaddr_in new_remote;
-				remote.sin_addr = remote_addr.sin_addr;
-				remote.sin_port = cmd.port();
+				new_remote.sin_addr = remote_addr.sin_addr;
+				new_remote.sin_port = cmd.port();
 				sock.cmd = WRITE;
 				sock.file = open(string((*it).second).c_str(), O_RDONLY);
 				open_tcp_sock(sock, new_remote, 0); //TODO obsluga socketow tcp

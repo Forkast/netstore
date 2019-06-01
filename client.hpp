@@ -39,8 +39,8 @@ private:
 	std::set < std::pair <uint64_t, sockaddr_in> > _servers;
 	std::vector <Socket> _data_socks;
 	std::queue <std::shared_ptr <Command> > _cmd_queue;
-	std::set < std::pair <std::shared_ptr <Command>, std::filesystem::path> > _add_queue;
-	std::unordered_set <std::shared_ptr <Command> > _get_queue;
+	std::set < std::pair <std::shared_ptr <AddCmd>, std::filesystem::path> > _add_queue;
+	std::unordered_set <std::shared_ptr <GetCmd> > _get_queue;
 
 	std::unordered_set <std::string> _listed_filenames;
 

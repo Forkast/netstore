@@ -37,6 +37,7 @@ exit(0);}
 
 struct Socket {
 	int socket;
+	int cmd_socket;
 	std::chrono::system_clock::time_point start_time;
 	int file;
 	int cmd; // 0 - read, 1 - write
@@ -85,6 +86,8 @@ public:
 class SimplCmd : public Command
 {
 public:
+	SimplCmd(const string & s);
+
 	SimplCmd(const string & s, sockaddr_in remote);
 
 	SimplCmd(sockaddr_in remote, uint64_t cmd_seq);
@@ -92,6 +95,8 @@ public:
 	virtual ~SimplCmd();
 
 	virtual void send(int sock);
+
+	uint64_t getCmdSeq();
 };
 
 class HelloCmd : public SimplCmd
@@ -143,6 +148,8 @@ public:
 class NoWayCmd : public SimplCmd
 {
 public:
+	NoWayCmd(const string & s, sockaddr_in remote);
+
 	NoWayCmd(const string & s, sockaddr_in remote, const string & filename);
 };
 
@@ -176,6 +183,8 @@ public:
 class ConnectMeCmd : public CmplxCmd
 {
 public:
+	ConnectMeCmd(const std::string & s, sockaddr_in remote);
+
 	ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name, int port);
 
 	const char * file_name();
@@ -198,5 +207,9 @@ public:
 class CanAddCmd : public CmplxCmd
 {
 public:
+	CanAddCmd(const std::string & s, sockaddr_in remote);
+
 	CanAddCmd(const std::string & s, sockaddr_in remote, uint64_t port);
+
+	const char * filename();
 };

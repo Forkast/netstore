@@ -1,4 +1,3 @@
-#pragma once
 #include "protocol.hpp"
 
 int write_file(Socket & sock)
@@ -133,6 +132,12 @@ SimplCmd::send(int sock)
 	cout << "na adres : " << inet_ntoa(_addr.sin_addr) << ":" << ntohs(_addr.sin_port) << endl;
 }
 
+uint64_t
+SimplCmd::getCmdSeq()
+{
+	return _cmd_seq;
+}
+
 HelloCmd::HelloCmd(const string & s, sockaddr_in remote)
 	: SimplCmd{s, remote}
 {
@@ -221,6 +226,12 @@ DelCmd::file_name()
 	return _data;
 }
 
+NoWayCmd::NoWayCmd(const string & s, sockaddr_in remote)
+	: SimplCmd{s, remote}
+{
+	strncpy(_cmd, NO_WAY, CMD_LEN);
+}
+
 NoWayCmd::NoWayCmd(const string & s, sockaddr_in remote, const string & filename)
 	: SimplCmd{s, remote}
 {
@@ -294,6 +305,13 @@ GoodDayCmd::getMCastAddr()
 	return _data;
 }
 
+
+ConnectMeCmd::ConnectMeCmd(const std::string & s, sockaddr_in remote)
+	: CmplxCmd{s, remote}
+{
+	
+}
+
 ConnectMeCmd::ConnectMeCmd(const std::string & s, sockaddr_in remote, const std::string & file_name, int port)
 	: CmplxCmd{s, remote}
 { //TODO: tak naprawdę tu będziemy chcieli wysłać zapytanie do reszty wezłów o istnienie takiego pliku.
@@ -342,9 +360,21 @@ AddCmd::file_name()
 	return _data;
 }
 
+CanAddCmd::CanAddCmd(const std::string & s, sockaddr_in remote)
+	: CmplxCmd{s, remote}
+{
+	strncpy(_cmd, CAN_ADD, CMD_LEN);
+}
+
 CanAddCmd::CanAddCmd(const std::string & s, sockaddr_in remote, uint64_t port)
 	: CmplxCmd{s, remote}
 {
 	strncpy(_cmd, CAN_ADD, CMD_LEN);
 	_param = ntohs(port);
+}
+
+const char *
+CanAddCmd::filename()
+{
+	return _data;
 }
