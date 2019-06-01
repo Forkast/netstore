@@ -378,3 +378,9 @@ CanAddCmd::filename()
 {
 	return _data;
 }
+
+uint64_t
+CanAddCmd::port()
+{
+	return _param;
+}

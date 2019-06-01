@@ -6,6 +6,7 @@
 #include <endian.h>
 #include <ios>
 #include <iostream>
+#include <memory>
 #include <unordered_set>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -34,6 +35,7 @@ using namespace std;
 exit(0);}
 
 #define prnterr(x) cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl;
+class Command;
 
 struct Socket {
 	int socket;
@@ -46,6 +48,8 @@ struct Socket {
 	bool sent;
 	bool conn;
 	bool todel;
+	std::shared_ptr <Command> connect_cmd;
+	std::string filename;
 };
 
 int write_file(Socket & sock);
@@ -212,4 +216,6 @@ public:
 	CanAddCmd(const std::string & s, sockaddr_in remote, uint64_t port);
 
 	const char * filename();
+
+	uint64_t port();
 };
