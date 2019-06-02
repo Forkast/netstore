@@ -36,6 +36,7 @@ exit(0);}
 
 #define prnterr(x) cerr << "Error making " << x << ". Code " << errno << " : " << strerror(errno) << endl;
 class Command;
+class CmplxCmd;
 
 struct Socket {
 	int socket;
@@ -81,6 +82,8 @@ public:
 	void setNetworkSeq(uint64_t seq);
 
 	void setAddr(sockaddr_in remote);
+
+	sockaddr_in getAddr();
 
 	uint64_t getCmdSeq();
 
@@ -155,6 +158,8 @@ public:
 	NoWayCmd(const string & s, sockaddr_in remote);
 
 	NoWayCmd(const string & s, sockaddr_in remote, const string & filename);
+
+	const char * filename();
 };
 
 class CmplxCmd : public Command
@@ -170,6 +175,8 @@ public:
 	virtual ~CmplxCmd();
 
 	virtual void send(int sock);
+
+	uint64_t param() const;
 };
 
 class GoodDayCmd : public CmplxCmd

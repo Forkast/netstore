@@ -8,7 +8,7 @@ int write_file(Socket & sock)
 	int a = write(sock.file, sock.buf, sock.size);
 	if (a < 0)
 		prnterr("writing file");
-	sock.sent = false;
+	sock.sent = true;
 	sock.size = 0;
 	return 1;
 }
@@ -16,9 +16,10 @@ int write_file(Socket & sock)
 void recv_file(Socket & sock)
 {
 	int a = recv(sock.socket, sock.buf, MAX_UDP, 0);
+	cout << "recvd " << sock.buf << " of size " << sock.size << endl;
 	if (a < 0)
 		prnterr("receiving file");
-	sock.sent = true;
+	sock.sent = false;
 	sock.size = a;
 }
 
@@ -28,6 +29,7 @@ int send_file(Socket & sock)
 		return -1;
 	}
 	int a = send(sock.socket, sock.buf, sock.size, 0);
+	cout << "sent " << sock.buf << " of size " << sock.size << endl;
 	if (a < 0)
 		prnterr("sending file");
 	sock.sent = true;
@@ -93,6 +95,13 @@ Command::setNetworkSeq(uint64_t seq) {
 void
 Command::setAddr(sockaddr_in remote) {
 	_addr = remote;
+}
+
+
+sockaddr_in
+Command::getAddr()
+{
+	return _addr;
 }
 
 uint64_t
@@ -239,6 +248,13 @@ NoWayCmd::NoWayCmd(const string & s, sockaddr_in remote, const string & filename
 	strncpy(_data, filename.c_str(), MAX_BUF);
 }
 
+
+const char *
+NoWayCmd::filename()
+{
+	return _data;
+}
+
 CmplxCmd::CmplxCmd(const string & s, sockaddr_in remote)
 	: Command{s, remote}
 {
@@ -279,6 +295,12 @@ CmplxCmd::send(int sock)
 		cout << hex << buf[i] ;
 	}
 	cout << endl;
+}
+
+uint64_t
+CmplxCmd::param() const
+{
+	return _param;
 }
 
 GoodDayCmd::GoodDayCmd(const std::string & s, sockaddr_in remote, const string & mcast_addr, uint64_t size_left)

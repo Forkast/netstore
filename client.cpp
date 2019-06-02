@@ -13,9 +13,7 @@ using namespace std::chrono;
 
 #define STDIN 0
 
-//TODO: walidacja cmd_seq
 //TODO: program raczej nie powinien wychodzic na bledzie
-//TODO: czy plik ktory chcialem wyslac to ten ktory serwer chce odebrac?
 
 bool operator/=(const string & s1, const string & s2)
 {
@@ -104,15 +102,15 @@ Client::run()
 				}
 			} else if (p.cmd == WRITE) {
 				if (p.sent) {
-					if (p.file > max)
-						max = p.file;
-					FD_SET(p.file, &wfds);
-					cout << "set writing file" << endl;
-				} else {
 					if (p.socket > max)
 						max = p.socket;
 					FD_SET(p.socket, &rfds);
 					cout << "set reading tcp socket" << endl;
+				} else {
+					if (p.file > max)
+						max = p.file;
+					FD_SET(p.file, &wfds);
+					cout << "set writing file" << endl;
 				}
 			}
 		}
@@ -171,6 +169,14 @@ Client::run()
 					cout << "we can write to the file" << endl;
 					int a = write_file(p);
 					if (a < 0) {
+						cout << "nie udalo sie" << endl;
+						cout << "File "
+							<< p.filename
+							<< "downloaded ("
+							<< inet_ntoa(p.connect_cmd->getAddr().sin_addr)
+							<< ":"
+							<< ntohs(p.connect_cmd->getAddr().sin_port)
+							<< ")" << endl;
 						todel(p);
 					}
 				}
@@ -235,36 +241,41 @@ Client::parse_command(const string & buf)
 		bool done = false;
 		path file;
 		Socket sock;
-		if (!_servers.empty()) { //musi się zmieścić
-			sockaddr_in best;
-			sock.conn = false;
-			sock.sent = false;
-			cout << "setting socket to READINGmode" << endl;
-			for (const auto & serv : _servers) {
-				if (serv.first > size) {
-					best = serv.second;
-					cout << "slemy do serwera : " << inet_ntoa(best.sin_addr) << endl;
-					if (filename[0] == '/' && is_regular_file(filename)) {
-						cout << "absolut path! " << filename << endl;
-						file = filename;
-						cout << "file : " << file << endl;
+		if (is_regular_file(filename)) {
+			cout << "absolut path! " << filename << endl;
+			file = filename;
+			cout << "file : " << file << endl;
+			if (!_servers.empty()) { //musi się zmieścić
+				sockaddr_in best;
+				sock.conn = false;
+				sock.sent = false;
+				cout << "setting socket to READING mode" << endl;
+
+				for (const auto & serv : _servers) {
+					if (serv.first > size) {
+						best = serv.second;
 						sock.connect_cmd = shared_ptr <Command> {new AddCmd{best, _cmd_seq, size, file.filename()}};
 						sock.filename = file;
-					} else if (is_regular_file(_current_dir / filename)) {
-						cout << "relative path! " << filename << endl;
-						file = _current_dir / filename;
-						cout << "file : " << file << endl;
-						sock.connect_cmd = shared_ptr <Command> {new AddCmd{best, _cmd_seq, size, file.filename()}};
-						sock.filename = file;
+						cout << "slemy do serwera : " << inet_ntoa(best.sin_addr) << endl;
+						break;
 					}
-					break;
 				}
+				
 			}
+		} else {
+			cout << "File "
+				<< filename
+				<< " does not exist" << endl;
+			return;
 		}
 		// TODO: a potem do następnego który ma miejsce
 		if (sock.connect_cmd) {
 			open_udp_sock(sock);
 			_data_socks.push_back(sock);
+		} else {
+			cout << "File "
+				<< filename
+				<< " too big" << endl;
 		}
 	} else if ("remove" /= buf) {
 		string cmd("remove");
@@ -318,33 +329,28 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 		//ustawiam ze sie polaczylem
 		cout << "no wiec sie polaczylem" << endl;
 
-		sockaddr_in new_remote;
-		new_remote.sin_family = AF_INET;
-		new_remote.sin_addr = remote_addr.sin_addr;
-		new_remote.sin_port = cmd.port();
+		udp_socket_to_tcp(sock, remote_addr, cmd, WRITE);
 		sock.file = open((_directory / cmd.file_name()).c_str(), O_WRONLY | O_CREAT, 0644);
-		sock.conn = true;
-		open_tcp_sock(sock, new_remote, WRITE);
-		close(sock.cmd_socket);
 
 	} else if (!strncmp(buf.c_str(), NO_WAY, strlen(NO_WAY))) {
 		NoWayCmd cmd{buf, remote_addr}; //TODO: sprobowac z nastepnym
+		cout << "File "
+			<< cmd.filename()
+			<< " downloading failed ("
+			<< inet_ntoa(remote_addr.sin_addr)
+			<< ":"
+			<< ntohs(remote_addr.sin_port)
+			<< ")" << endl;
 	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
 		CanAddCmd cmd{buf, remote_addr}; //NOTE: tutaj natomiast otwieram socket_tcp
 		//ustawiam ze sie polaczylem
 		cout << "mozna strzelac " << cmd.port() << endl;
 
-		sockaddr_in new_remote;
-		new_remote.sin_family = AF_INET;
-		new_remote.sin_addr = remote_addr.sin_addr;
-		new_remote.sin_port = cmd.port();
+		udp_socket_to_tcp(sock, remote_addr, cmd, READ);
 		sock.file = open(sock.filename.c_str(), O_RDONLY);
 		cout << "opening file " << sock.filename.c_str() << endl;
 		if (sock.file < 0)
 			syserr("canadd open");
-		sock.conn = true;
-		open_tcp_sock(sock, new_remote, READ);
-		close(sock.cmd_socket);
 
 	}
 }
@@ -397,7 +403,7 @@ Client::open_udp_sock(Socket & sock)
 void
 Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flag)
 {
-	sock.sent = false;
+	sock.sent = true;
 	sock.cmd = flag;
 	sockaddr_in local_address;
 	sock.socket = socket(AF_INET, SOCK_STREAM, 0);
@@ -412,6 +418,18 @@ Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flag)
 
 	if (connect(sock.socket, (sockaddr *) &remote_addr, sizeof remote_addr) < 0)
 		syserr("connect");
+}
+
+void
+Client::udp_socket_to_tcp(Socket & sock, sockaddr_in remote_addr, const CmplxCmd & cmd, int read_write)
+{
+	sockaddr_in new_remote;
+	new_remote.sin_family = AF_INET;
+	new_remote.sin_addr = remote_addr.sin_addr;
+	new_remote.sin_port = cmd.param();
+	sock.conn = true;
+	open_tcp_sock(sock, new_remote, read_write);
+	close(sock.cmd_socket);
 }
 
 /*

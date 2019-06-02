@@ -58,8 +58,8 @@ Server::run()
 	int max = _sock;
 	timeval timeout = _timeout; //TODO: jakis sensowny timeout
 
-	cout << "przed wyslaniem size " << _data_socks.size() << endl;
-	for (auto const & p : _data_socks) { //TODO: wydzielic do funkcji
+	cout << "przed selectem size " << _data_socks.size() << endl;
+	for (auto const & p : _data_socks) {
 		if (!p.conn) {
 			if (p.socket > max)
 				max = p.socket;
@@ -79,15 +79,15 @@ Server::run()
 			}
 		} else if (p.cmd == WRITE) {
 			if (p.sent) {
-				if (p.file > max)
-					max = p.file;
-				FD_SET(p.file, &wfds);
-				cout << "set writing file" << endl;
-			} else {
 				if (p.socket > max)
 					max = p.socket;
 				FD_SET(p.socket, &rfds);
 				cout << "set reading tcp socket" << endl;
+			} else {
+				if (p.file > max)
+					max = p.file;
+				FD_SET(p.file, &wfds);
+				cout << "set writing file" << endl;
 			}
 		}
 // 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac timeout
@@ -134,7 +134,7 @@ Server::run()
 				read_file(p);
 			}
 			if (FD_ISSET(p.file, &wfds)) {
-				cout << "we can read from the file" << endl;
+				cout << "we can write to the file" << endl;
 				int a = write_file(p);
 				if (a < 0) {
 					todel(p);
@@ -252,6 +252,12 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 														port}));
 			_data_socks.push_back(sock);
 		}
+	} else {
+		cout << "[PCKG ERROR] Skipping invalid package from "
+			<< inet_ntoa(remote_addr.sin_addr)
+			<< ":"
+			<< ntohs(remote_addr.sin_port)
+			<< ".";
 	}
 }
 
@@ -288,7 +294,7 @@ int
 Server::open_file(const char * name, int flags)
 {
 	auto got = _files.find(name);
-	if ((flags == O_WRONLY | O_CREAT) || got != _files.end()) {
+	if ((flags == (O_WRONLY | O_CREAT)) || got != _files.end()) {
 		cout << "opening: " << _directory / name << endl;
 		return open((_directory / name).c_str(), flags, 0644);
 	}
