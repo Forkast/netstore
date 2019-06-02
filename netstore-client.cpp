@@ -11,7 +11,6 @@ int main(int argc, char * argv[])
 
 	char * mcast_addr = nullptr, * out_fldr = nullptr;
 	int64_t cmd_port = -1, timeout = 5;
-	int64_t max_space = 52428800;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "-g")) {
 			mcast_addr = argv[i + 1];

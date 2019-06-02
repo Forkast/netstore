@@ -234,7 +234,7 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 															  space_left()}});
 	} else if (!strncmp(buf.c_str(), LIST, strlen(LIST))) {
 		ListCmd list_cmd{buf, remote_addr};
-		auto files_it = _files.begin(); //TODO: obsluga wyszukiwania
+		auto files_it = _files.begin();
 		string pattern{list_cmd.filename()};
 		while (files_it != _files.end())
 			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{buf, remote_addr, files_it, _files.end(), pattern}});
@@ -268,7 +268,7 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 			int port = open_tcp_port(sock, WRITE);
 			_cmd_queue.push(shared_ptr <Command> (new CanAddCmd{buf,
 														remote_addr,
-														port}));
+														(in_port_t)port}));
 			_data_socks.push_back(sock);
 		}
 	} else {

@@ -20,7 +20,7 @@ struct Comparator
                      const std::pair<uint64_t, sockaddr_in>& rhs) const
     {
       if (lhs.first == rhs.first)
-        return (const uint32_t) lhs.second.sin_addr.s_addr < (const uint32_t) rhs.second.sin_addr.s_addr;
+        return (uint32_t) lhs.second.sin_addr.s_addr < (uint32_t) rhs.second.sin_addr.s_addr;
       else
         return lhs.first < rhs.first;
     }

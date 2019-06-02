@@ -129,8 +129,8 @@ Client::run()
 	} else {
 		if (FD_ISSET(STDIN, &rfds)) {
 			char buf[MAX_UDP];
-			read(STDIN, buf, MAX_UDP);
-			parse_command(buf);
+			int a = read(STDIN, buf, MAX_UDP);
+			parse_command(string(buf, a));
 		}
 		if (FD_ISSET(_udp_sock, &wfds)) {
 			auto cmd = _cmd_queue.front();
@@ -236,7 +236,6 @@ Client::parse_command(const string & buf)
 		char filename[MAX_BUF];
 		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
 		uint64_t size = 0;
-		bool done = false;
 		path file;
 		Socket sock;
 		if (is_regular_file(filename)) {
@@ -371,7 +370,6 @@ Client::open_udp_sock()
 {
 	sockaddr_in local_address;
 	_udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-	socklen_t len = sizeof local_address;
 
 	local_address.sin_family = AF_INET;
 	local_address.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -386,7 +384,6 @@ Client::open_udp_sock(Socket & sock)
 {
 	sockaddr_in local_address;
 	sock.cmd_socket = socket(AF_INET, SOCK_DGRAM, 0);
-	socklen_t len = sizeof local_address;
 	sock.todel = false;
 	sock.start_time = system_clock::now();
 
@@ -405,7 +402,6 @@ Client::open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flag)
 	sock.cmd = flag;
 	sockaddr_in local_address;
 	sock.socket = socket(AF_INET, SOCK_STREAM, 0);
-	socklen_t len = sizeof local_address;
 
 	local_address.sin_family = AF_INET;
 	local_address.sin_addr.s_addr = htonl(INADDR_ANY);
