@@ -61,36 +61,30 @@ Server::run()
 	system_clock::time_point first_time_point = system_clock::time_point::max();
 	timeval real_timeout{0, 0};
 
-	cout << "przed selectem size " << _data_socks.size() << endl;
 	for (auto const & p : _data_socks) {
 		if (!p.conn) {
 			if (p.socket > max)
 				max = p.socket;
 			FD_SET(p.socket, &rfds);
-			cout << "set accepting TCP socket" << endl;
 		} else if (p.cmd == READ) {
 			if (p.sent) {
 				if (p.file > max)
 					max = p.file;
 				FD_SET(p.file, &rfds);
-				cout << "set reading file" << endl;
-			} else {// czytam tylko jak poprzednia paczka została wysłana
+			} else {
 				if (p.socket > max)
 					max = p.socket;
 				FD_SET(p.socket, &wfds);
-				cout << "set writing tcp socket" << endl;
 			}
 		} else if (p.cmd == WRITE) {
 			if (p.sent) {
 				if (p.socket > max)
 					max = p.socket;
 				FD_SET(p.socket, &rfds);
-				cout << "set reading tcp socket" << endl;
 			} else {
 				if (p.file > max)
 					max = p.file;
 				FD_SET(p.file, &wfds);
-				cout << "set writing file" << endl;
 			}
 		}
 		if (p.start_time < first_time_point) {
@@ -99,26 +93,20 @@ Server::run()
 	}
 
 	if (!_data_socks.empty()) {
-// 		cout << dec << "dzisiaj spimy: " << _timeout.tv_sec << endl;
 		long int passed = duration_cast <seconds> (system_clock::now() - first_time_point).count();
 		timeout = &real_timeout;
-// 		cout << dec << "minelo: " << passed << endl;
 		real_timeout.tv_sec = _timeout.tv_sec - passed;
-// 		cout << dec << "pozostalo spania: " << real_timeout.tv_sec << endl;
 	}
 
 	if (!_cmd_queue.empty()) {
-		cout << "is not empty" << endl;
 		FD_SET(_sock, &wfds);
 	}
 
 	if (exit_program != 0) return 0;
 	int a = select(max + 1, &rfds, &wfds, nullptr, timeout);
 	if (exit_program != 0) return 0;
-	cout << "select out " << endl;
 
 	if (a == 0) {
-		cout << "Socket sie przeterminowal" << endl;
 		for (auto & p : _data_socks) {
 			long int passed = duration_cast <seconds> (system_clock::now() - p.start_time).count();
 			if (passed >= _timeout.tv_sec)
@@ -131,27 +119,19 @@ Server::run()
 			char b[MAX_UDP];
 			int len = recvfrom(_sock, b, MAX_UDP, 0, (sockaddr *) &remote_addr, &socklen);
 			remote_addr.sin_family = AF_INET;
-			cout << "przeczytane " << len << " bajtow" << endl;
 			string buf = string(b, len);
 			push_commands(buf, remote_addr);
-			for (auto i : buf) {
-				cout << hex << (uint8_t)i;
-			}
-			cout << endl;
 		}
 		if (FD_ISSET(_sock, &wfds)) {
-			cout << "writing on udp" << endl;
 			auto cmd = _cmd_queue.front();
 			_cmd_queue.pop();
 			cmd->send(_sock);
 		}
 		for (auto & p : _data_socks) {
 			if (FD_ISSET(p.file, &rfds)) {
-				cout << "we can read from the file" << endl;
 				read_file(p);
 			}
 			if (FD_ISSET(p.file, &wfds)) {
-				cout << "we can write to the file" << endl;
 				int a = write_file(p);
 				if (a < 0) {
 					todel(p);
@@ -159,11 +139,9 @@ Server::run()
 			}
 			if (FD_ISSET(p.socket, &rfds)) {
 				if (!p.conn) {
-					cout << "time to accept connection" << endl;
 					sockaddr_in addr;
 					socklen_t len = sizeof addr;
 					int s = accept(p.socket, (sockaddr *) &addr, &len);
-					cout << "connection from: " << inet_ntoa(addr.sin_addr) << ":" << dec << ntohs(addr.sin_port) << endl;
 					close(p.socket);
 					p.socket = s;
 					p.conn = true;
@@ -172,7 +150,6 @@ Server::run()
 				}
 			}
 			if (FD_ISSET(p.socket, &wfds)) {
-				cout << "socket is open so im sending!" << endl;
 				int a = send_file(p);
 				if (a < 0) {
 					todel(p);
@@ -199,7 +176,6 @@ Server::index_files()
 	}
 }
 
-/* Serwer powinien podłączyć się do grupy rozgłaszania ukierunkowanego pod wskazanym adresem MCAST_ADDR. Serwer powinien nasłuchiwać na porcie CMD_PORT poleceń otrzymanych z sieci protokołem UDP także na swoim adresie unicast. Serwer powinien reagować na pakiety UDP zgodnie z protokołem opisanym wcześniej. */
 void
 Server::join_broadcast()
 {
@@ -302,10 +278,9 @@ Server::open_tcp_port(Socket & sock, int flag)
 	if (getsockname(sock.socket, (struct sockaddr *)&local_address, &len) < 0)
 		syserr("getsockname");
 
-	cout << "nowy port to " << inet_ntoa(local_address.sin_addr) << ":" << ntohs(local_address.sin_port) << endl;
-
 	if (listen(sock.socket, 2) < 0)
 		syserr("listen");
+
 	return ntohs(local_address.sin_port);
 }
 
@@ -314,7 +289,6 @@ Server::open_file(const char * name, int flags)
 {
 	auto got = _files.find(name);
 	if ((flags == (O_WRONLY | O_CREAT)) || got != _files.end()) {
-		cout << "opening: " << _directory / name << endl;
 		return open((_directory / name).c_str(), flags, 0644);
 	}
 	return -1;
@@ -325,7 +299,6 @@ Server::delete_file(const char * name)
 {
 	auto got = _files.find(name);
 	if (got != _files.end()) {
-		cout << "removing: " << _directory / name << endl;
 		directory_entry f{_directory / name};
 		_space_used -= f.file_size();
 		remove(_directory / name);

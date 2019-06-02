@@ -56,12 +56,10 @@ Client::run()
 	for (auto const & p : _data_socks) {
 		if (!p.conn) {
 			if (p.sent) {
-				cout << "juz wyslany wiec bede czytac" << endl;
 				if (p.cmd_socket > max)
 					max = p.cmd_socket;
 				FD_SET(p.cmd_socket, &rfds);
 			} else {
-				cout << "bede wysylal na socket" << endl;
 				if (p.cmd_socket > max)
 					max = p.cmd_socket;
 				FD_SET(p.cmd_socket, &wfds);
@@ -72,24 +70,20 @@ Client::run()
 					if (p.file > max)
 						max = p.file;
 					FD_SET(p.file, &rfds);
-					cout << "set reading file" << endl;
 				} else {
 					if (p.socket > max)
 						max = p.socket;
 					FD_SET(p.socket, &wfds);
-					cout << "set writing tcp socket" << endl;
 				}
 			} else if (p.cmd == WRITE) {
 				if (p.sent) {
 					if (p.socket > max)
 						max = p.socket;
 					FD_SET(p.socket, &rfds);
-					cout << "set reading tcp socket" << endl;
 				} else {
 					if (p.file > max)
 						max = p.file;
 					FD_SET(p.file, &wfds);
-					cout << "set writing file" << endl;
 				}
 			}
 		}
@@ -159,14 +153,11 @@ Client::run()
 				}
 			} else {
 				if (FD_ISSET(p.file, &rfds)) {
-					cout << "we can read from the file" << endl;
 					read_file(p);
 				}
 				if (FD_ISSET(p.file, &wfds)) {
-					cout << "we can write to the file" << endl;
 					int a = write_file(p);
 					if (a < 0) {
-						cout << "nie udalo sie" << endl;
 						cout << "File "
 							<< p.filename
 							<< "downloaded ("
@@ -181,7 +172,6 @@ Client::run()
 					recv_file(p);
 				}
 				if (FD_ISSET(p.socket, &wfds)) {
-					cout << "socket is open so im sending!" << endl;
 					int a = send_file(p);
 					if (a < 0) {
 						todel(p);
@@ -208,52 +198,40 @@ Client::parse_command(const string & buf)
 		_servers.clear();
 		syncronous_command(1);
 	} else if (regex_match(buf, m, regex("^\\s*search\\s*([^\\s]*)\\s*$"))) {
-		string cmd("search");
 		char filename[MAX_BUF];
 		sscanf(m[1].str().c_str(), "%s", filename);
 		syncronous_command(2, filename);
 	} else if (regex_match(buf, m, regex("^\\s*fetch\\s*([^\\s]+)\\s*$"))) {
-		cout << "fetching" << endl;
-		string cmd("fetch");
 		char filename[MAX_BUF];
 		sscanf(m[1].str().c_str(), "%s", filename);
 		if (_listed_filenames.find(filename) != _listed_filenames.end()) {
-			cout << "znaleziono plik : " << filename << endl;
 			Socket sock;
 			sock.conn = false;
 			sock.sent = false;
-			cout << "setting socket to WRITING mode" << endl;
 			sock.connect_cmd = shared_ptr <Command> {new GetCmd{_multicast,
 																_cmd_seq,
 																filename}};
 			open_udp_sock(sock);
 			_data_socks.push_back(sock);
-		} else {
-			cout << "nie znaleziono w liscie pliku : " << filename << endl;
 		}
 	} else if (regex_match(buf, m, regex("^\\s*upload\\s*([^\\s]+)\\s*$"))) {
-		string cmd("upload");
 		char filename[MAX_BUF];
-		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
+		sscanf(m[1].str().c_str(), "%s", filename);
 		uint64_t size = 0;
 		path file;
 		Socket sock;
 		if (is_regular_file(filename)) {
-			cout << "absolut path! " << filename << endl;
 			file = filename;
-			cout << "file : " << file << endl;
 			if (!_servers.empty()) { //musi się zmieścić
 				sockaddr_in best;
 				sock.conn = false;
 				sock.sent = false;
-				cout << "setting socket to READING mode" << endl;
 
 				for (const auto & serv : _servers) {
 					if (serv.first > size) {
 						best = serv.second;
 						sock.connect_cmd = shared_ptr <Command> {new AddCmd{best, _cmd_seq, size, file.filename()}};
 						sock.filename = file;
-						cout << "slemy do serwera : " << inet_ntoa(best.sin_addr) << endl;
 						break;
 					}
 				}
@@ -275,9 +253,8 @@ Client::parse_command(const string & buf)
 				<< " too big" << endl;
 		}
 	} else if (regex_match(buf, m, regex("^\\s*remove\\s*([^\\s]+)\\s*$"))) {
-		string cmd("remove");
 		char filename[MAX_BUF];
-		sscanf(buf.substr(buf.find(cmd) + cmd.size(), buf.size()).c_str(), "%s", filename);
+		sscanf(m[1].str().c_str(), "%s", filename);
 		if (strlen(filename) != 0) {
 			_cmd_queue.push(shared_ptr <Command> {new DelCmd{_multicast,
 															_cmd_seq,
@@ -313,6 +290,12 @@ Client::parse_response(const string & buf, sockaddr_in remote_addr)
 			_listed_filenames.insert(filename);
 			cout << filename << " (" << inet_ntoa(remote_addr.sin_addr) << ")" << endl;
 		}
+	} else {
+		cout << "[PCKG ERROR] Skipping invalid package from "
+			<< inet_ntoa(remote_addr.sin_addr)
+			<< ":"
+			<< ntohs(remote_addr.sin_port)
+			<< ".";
 	}
 }
 
@@ -323,8 +306,6 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 		return;
 	if (!strncmp(buf.c_str(), CONNECT_ME, strlen(CONNECT_ME))) {
 		ConnectMeCmd cmd{buf, remote_addr};
-		//ustawiam ze sie polaczylem
-		cout << "no wiec sie polaczylem" << endl;
 
 		udp_socket_to_tcp(sock, remote_addr, cmd, WRITE);
 		sock.file = open((_directory / cmd.file_name()).c_str(), O_WRONLY | O_CREAT, 0644);
@@ -340,15 +321,18 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 			<< ")" << endl;
 	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
 		CanAddCmd cmd{buf, remote_addr};
-		//ustawiam ze sie polaczylem
-		cout << "mozna strzelac " << cmd.port() << endl;
 
 		udp_socket_to_tcp(sock, remote_addr, cmd, READ);
 		sock.file = open(sock.filename.c_str(), O_RDONLY);
-		cout << "opening file " << sock.filename.c_str() << endl;
 		if (sock.file < 0)
 			syserr("canadd open");
 
+	} else {
+		cout << "[PCKG ERROR] Skipping invalid package from "
+			<< inet_ntoa(remote_addr.sin_addr)
+			<< ":"
+			<< ntohs(remote_addr.sin_port)
+			<< ".";
 	}
 }
 
@@ -425,35 +409,3 @@ Client::udp_socket_to_tcp(Socket & sock, sockaddr_in remote_addr, const CmplxCmd
 	open_tcp_sock(sock, new_remote, read_write);
 	close(sock.cmd_socket);
 }
-
-/*
-discover - synchronous
-"^\\s*discover\\s*$"
-	Found 10.1.1.28 (239.10.11.12) with free space 23456
-
-search %s - synchronous
-search .*
-
-"^\\s*search\\s*\\w*\\s*$"
-
-    {nazwa_pliku} ({ip_serwera})
-{
-fetch %s - async
-"^\\s*fetch\\s*\\w+\\s*$"
-
-	File {%s} downloaded ({ip_serwera}:{port_serwera})
-	File {%s} downloading failed ({ip_serwera}:{port_serwera}) {opis_błędu}
-
-upload %s - async
-"^\\s*upload\\s*(\\w+)\\s*$"
-	File {%s} does not exist
-	File {%s} too big
-	File {%s} uploaded ({ip_serwera}:{port_serwera})
-	File {%s} uploading failed ({ip_serwera}:{port_serwera}) {opis_błędu}
-} - tcp socket packet queue
-remove %s - async, not empty
-"^\\s*remove\\s*(\\w+)\\s*$"
-
-exit
-"^\\s*exit\\s*$"
-*/

@@ -17,7 +17,6 @@ int write_file(Socket & sock)
 void recv_file(Socket & sock)
 {
 	int a = recv(sock.socket, sock.buf, MAX_UDP, 0);
-	cout << "recvd " << sock.buf << " of size " << sock.size << endl;
 	if (a < 0)
 		prnterr("receiving file");
 	sock.sent = false;
@@ -30,7 +29,6 @@ int send_file(Socket & sock)
 		return -1;
 	}
 	int a = send(sock.socket, sock.buf, sock.size, 0);
-	cout << "sent " << sock.buf << " of size " << sock.size << endl;
 	if (a < 0)
 		prnterr("sending file");
 	sock.sent = true;
@@ -139,7 +137,6 @@ SimplCmd::send(int sock)
 	memcpy(buf + offset, _data, MAX_UDP - offset);
 	if (sendto(sock, buf, MAX_UDP, 0, (const sockaddr *)&_addr, sizeof _addr) < 0)
 		syserr("sendto");
-	cout << "na adres : " << inet_ntoa(_addr.sin_addr) << ":" << ntohs(_addr.sin_port) << endl;
 }
 
 uint64_t
@@ -307,10 +304,6 @@ CmplxCmd::send(int sock)
 	int a = 0;
 	if ((a = sendto(sock, (char *)buf, offset, 0, (const sockaddr*)&_addr, sizeof _addr)) < 0)
 		syserr("sendto");
-	for (int i = 0; i < offset; i++) {
-		cout << hex << buf[i] ;
-	}
-	cout << endl;
 }
 
 uint64_t
