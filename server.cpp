@@ -15,6 +15,7 @@
 
 using namespace std;
 using namespace std::filesystem;
+using namespace std::chrono;
 
 namespace {
 	std::sig_atomic_t exit_program;
@@ -56,7 +57,9 @@ Server::run()
 	FD_ZERO(&wfds);
 	FD_SET(_sock, &rfds);
 	int max = _sock;
-	timeval timeout = _timeout; //TODO: jakis sensowny timeout
+	timeval * timeout = nullptr; //TODO: jakis sensowny timeout
+	system_clock::time_point first_time_point = system_clock::time_point::max();
+	timeval real_timeout{0, 0};
 
 	cout << "przed selectem size " << _data_socks.size() << endl;
 	for (auto const & p : _data_socks) {
@@ -90,8 +93,18 @@ Server::run()
 				cout << "set writing file" << endl;
 			}
 		}
-// 		if (p.timeout.tv_sec < timeout.tv_sec) // TODO: dodac timeout
-// 			timeout = p.timeout;
+		if (p.start_time < first_time_point) {
+			first_time_point = p.start_time;
+		}
+	}
+
+	if (!_data_socks.empty()) {
+// 		cout << dec << "dzisiaj spimy: " << _timeout.tv_sec << endl;
+		long int passed = duration_cast <seconds> (system_clock::now() - first_time_point).count();
+		timeout = &real_timeout;
+// 		cout << dec << "minelo: " << passed << endl;
+		real_timeout.tv_sec = _timeout.tv_sec - passed;
+// 		cout << dec << "pozostalo spania: " << real_timeout.tv_sec << endl;
 	}
 
 	if (!_cmd_queue.empty()) {
@@ -100,12 +113,17 @@ Server::run()
 	}
 
 	if (exit_program != 0) return 0;
-	int a = select(max + 1, &rfds, &wfds, nullptr, &timeout);
+	int a = select(max + 1, &rfds, &wfds, nullptr, timeout);
 	if (exit_program != 0) return 0;
 	cout << "select out " << endl;
 
 	if (a == 0) {
-		//for (//wywalic przeterminowane sockety TODO
+		cout << "Socket sie przeterminowal" << endl;
+		for (auto & p : _data_socks) {
+			long int passed = duration_cast <seconds> (system_clock::now() - p.start_time).count();
+			if (passed >= _timeout.tv_sec)
+				todel(p);
+		}
 	} else {
 		if (FD_ISSET(_sock, &rfds)) {
 			sockaddr_in remote_addr;
@@ -120,7 +138,6 @@ Server::run()
 				cout << hex << (uint8_t)i;
 			}
 			cout << endl;
-// 			cmd->getCmd();
 		}
 		if (FD_ISSET(_sock, &wfds)) {
 			cout << "writing on udp" << endl;
@@ -162,11 +179,11 @@ Server::run()
 				}
 			}
 		}
-		_data_socks.erase(
-			std::remove_if(_data_socks.begin(), _data_socks.end(),
-						[](const Socket & s) { return s.todel; }),
-			_data_socks.end());
 	}
+	_data_socks.erase(
+		std::remove_if(_data_socks.begin(), _data_socks.end(),
+					[](const Socket & s) { return s.todel; }),
+		_data_socks.end());
 	return 1;
 }
 
@@ -216,9 +233,11 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 															  _mcast_addr,
 															  space_left()}});
 	} else if (!strncmp(buf.c_str(), LIST, strlen(LIST))) {
+		ListCmd list_cmd{buf, remote_addr};
 		auto files_it = _files.begin(); //TODO: obsluga wyszukiwania
+		string pattern{list_cmd.filename()};
 		while (files_it != _files.end())
-			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{buf, remote_addr, files_it, _files.end()}});
+			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{buf, remote_addr, files_it, _files.end(), pattern}});
 	} else if (!strncmp(buf.c_str(), GET, strlen(GET))) {
 		GetCmd get_cmd{buf, remote_addr};
 		Socket sock;

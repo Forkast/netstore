@@ -1,4 +1,5 @@
 #include "protocol.hpp"
+#include <regex>
 
 int write_file(Socket & sock)
 {
@@ -159,29 +160,44 @@ HelloCmd::HelloCmd(sockaddr_in remote, uint64_t cmd_seq)
 	strncpy(_cmd, HELLO, CMD_LEN);
 }
 
-
-ListCmd::ListCmd(sockaddr_in remote, uint64_t cmd_seq)
-	: SimplCmd{remote, cmd_seq}
+ListCmd::ListCmd(const string & s, sockaddr_in remote)
+	: SimplCmd{s, remote}
 {
 	strncpy(_cmd, LIST, CMD_LEN);
 }
 
+ListCmd::ListCmd(sockaddr_in remote, uint64_t cmd_seq, const std::string & pattern)
+	: SimplCmd{remote, cmd_seq}
+{
+	strncpy(_cmd, LIST, CMD_LEN);
+	strncpy(_data, pattern.c_str(), pattern.size());
+}
+
+const char *
+ListCmd::filename()
+{
+	return _data;
+}
+
 MyListCmd::MyListCmd(const std::string & s, sockaddr_in remote,
 			std::unordered_set <std::string>::iterator & file_names_it,
-			const std::unordered_set <std::string>::iterator & files_end)
+			const std::unordered_set <std::string>::iterator & files_end,
+			const std::string & pattern)
 	: SimplCmd{s, remote}
 {
 	strncpy(_cmd, MY_LIST, CMD_LEN);
 	size_t size = MAX_BUF;
 	size_t offset = 0;
 	while (file_names_it != files_end) {
-		if ((*file_names_it).size() + 1 < size) {
-			memcpy(_data + offset, (*file_names_it).c_str(), (*file_names_it).size());
-			_data[offset + (*file_names_it).size()] = '\n';
-			size -= (*file_names_it).size() + 1;
-			offset += (*file_names_it).size() + 1;
-		} else {
-			break;
+		if (regex_match((*file_names_it), regex(".*" + pattern + ".*"))) {
+			if ((*file_names_it).size() + 1 < size) {
+				memcpy(_data + offset, (*file_names_it).c_str(), (*file_names_it).size());
+				_data[offset + (*file_names_it).size()] = '\n';
+				size -= (*file_names_it).size() + 1;
+				offset += (*file_names_it).size() + 1;
+			} else {
+				break;
+			}
 		}
 		++file_names_it;
 	}
