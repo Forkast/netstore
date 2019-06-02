@@ -45,10 +45,12 @@ struct Socket {
 	int file;
 	int cmd; // 0 - read, 1 - write
 	char buf[MAX_UDP];
-	int size;
+	uint64_t size;
 	bool sent;
 	bool conn;
 	bool todel;
+	int already_processed;
+
 	std::shared_ptr <Command> connect_cmd;
 	std::string filename;
 };
@@ -61,7 +63,7 @@ int send_file(Socket & sock);
 
 void read_file(Socket & sock);
 
-void todel(Socket & sock);
+void todel(Socket & sock, bool temp = false);
 
 class Command {
 protected:

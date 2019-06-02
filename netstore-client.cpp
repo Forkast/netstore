@@ -8,6 +8,7 @@ void usage(const char * name)
 
 int main(int argc, char * argv[])
 {
+	std::signal(SIGINT, signal_handler);
 
 	char * mcast_addr = nullptr, * out_fldr = nullptr;
 	int64_t cmd_port = -1, timeout = 5;

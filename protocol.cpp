@@ -45,11 +45,15 @@ void read_file(Socket & sock)
 	sock.size = a;
 }
 
-void todel(Socket & sock)
+void todel(Socket & sock, bool temp)
 {
 	sock.todel = true;
-	close(sock.file);
-	close(sock.socket);
+	if (!sock.conn && temp) {
+		close(sock.cmd_socket);
+	} else {
+		close(sock.file);
+		close(sock.socket);
+	}
 }
 
 Command::Command(const std::string & s, sockaddr_in remote)

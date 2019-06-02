@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+void signal_handler(int signal);
+
 struct Comparator
 {
     bool operator() (const std::pair<uint64_t, sockaddr_in>& lhs,
@@ -45,7 +47,9 @@ private:
 	sockaddr_in _multicast;
 	bool _exit;
 	bool _locked;
+	bool _repeat_upload;
 	std::string _file_waited_for;
+	std::string _repeat_filename;
 
 	std::set < std::pair <uint64_t, sockaddr_in> , Comparator> _servers;
 	std::vector <Socket> _data_socks;
@@ -63,4 +67,5 @@ private:
 	void open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flags);
 	void udp_socket_to_tcp(Socket & sock, sockaddr_in remote_addr, const CmplxCmd & cmd, int read_write);
 	void print_invalid(sockaddr_in remote_addr);
+	int send_file_to_serv(Socket & sock);
 };

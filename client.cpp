@@ -26,6 +26,15 @@ uint64_t generate_cmd_seq()
 	return dis(gen);
 }
 
+namespace {
+	std::sig_atomic_t exit_program;
+}
+
+void signal_handler(int signal)
+{
+	exit_program = signal;
+}
+
 Client::Client(const string & mcast_addr, in_port_t cmd_port, const string & directory, int timeout)
 	: _mcast_addr{mcast_addr},
 	  _cmd_port{cmd_port},
@@ -41,6 +50,7 @@ Client::Client(const string & mcast_addr, in_port_t cmd_port, const string & dir
 	_locked = false;
 	open_udp_sock();
 	_cmd_seq = generate_cmd_seq();
+	_repeat_upload = false;
 }
 
 int
@@ -119,18 +129,49 @@ Client::run()
 		FD_SET(_udp_sock, &wfds);
 	}
 
+	if (exit_program != 0) return 0;
 	int a = select(max + 1, &rfds, &wfds, nullptr, timeout);
+	if (exit_program != 0) return 0;
 
 	if (a == 0) {
 		int64_t passed = duration_cast <seconds> (system_clock::now() - _lock_time).count();
-		if (passed > _timeout.tv_sec)
+		if (passed > _timeout.tv_sec) {
 			_locked = false;
+			if (_repeat_upload && !_servers.empty()) {
+				Socket sock;
+				path file{_repeat_filename};
+				sock.filename = _repeat_filename;
+				sock.size = file_size(file);
+				sock.cmd = READ;
+				sock.already_processed = 0;
+				sock.start_time = system_clock::now();
+				if (send_file_to_serv(sock)) {
+					open_udp_sock(sock);
+					_data_socks.push_back(sock);
+				}
+				_repeat_upload = false;
+			}
+		}
 
 		for (auto & p : _data_socks) {
 			if (!p.conn) {
 				long int passed = duration_cast <seconds> (system_clock::now() - p.start_time).count();
-				if (passed >= _timeout.tv_sec)
-					todel(p);
+				if (passed >= _timeout.tv_sec) {
+					if (p.cmd == WRITE) {
+						cout << "File "
+							<< p.filename
+							<< " downloading failed ("
+							<< inet_ntoa(p.connect_cmd->getAddr().sin_addr)
+							<< ":"
+							<< ntohs(p.connect_cmd->getAddr().sin_port)
+							<< ")" << endl;
+					} else {
+						cout << "File "
+							<< (((AddCmd *)p.connect_cmd.get())->file_name())
+							<< " too big" << endl;
+					}
+					todel(p, true);
+				}
 			}
 		}
 	} else {
@@ -178,7 +219,7 @@ Client::run()
 							<< ":"
 							<< ntohs(p.connect_cmd->getAddr().sin_port)
 							<< ")" << endl;
-						todel(p);
+						todel(p, true);
 					}
 				}
 				if (FD_ISSET(p.socket, &rfds)) {
@@ -187,7 +228,14 @@ Client::run()
 				if (FD_ISSET(p.socket, &wfds)) {
 					int a = send_file(p);
 					if (a < 0) {
-						todel(p);
+						cout << "File "
+							<< p.filename
+							<< " uploaded ("
+							<< inet_ntoa(p.connect_cmd->getAddr().sin_addr)
+							<< ":"
+							<< ntohs(p.connect_cmd->getAddr().sin_port)
+							<< ")" << endl;
+						todel(p, true);
 					}
 				}
 			}
@@ -207,20 +255,24 @@ void
 Client::parse_command(const string & buf)
 {
 	smatch m;
+	char filename[MAX_BUF];
+	memset(filename, 0, MAX_BUF);
 	if (regex_match(buf, regex("^\\s*discover\\s*$"))) {
 		_servers.clear();
 		syncronous_command(1);
 	} else if (regex_match(buf, m, regex("^\\s*search\\s*([^\\s]*)\\s*$"))) {
-		char filename[MAX_BUF];
-		sscanf(m[1].str().c_str(), "%s", filename);
+		if (m.size() == 2) {
+			sscanf(m[1].str().c_str(), "%s", filename);
+		} else {
+			memset(filename, 0, MAX_BUF);
+		}
 		syncronous_command(2, filename);
 	} else if (regex_match(buf, m, regex("^\\s*fetch\\s*([^\\s]+)\\s*$"))) {
-		char filename[MAX_BUF];
 		sscanf(m[1].str().c_str(), "%s", filename);
 		if (_listed_filenames.find(filename) != _listed_filenames.end()) {
 			Socket sock;
-			sock.conn = false;
-			sock.sent = false;
+			sock.cmd = WRITE;
+			sock.already_processed = 0;
 			sock.connect_cmd = shared_ptr <Command> {new GetCmd{_multicast,
 																_cmd_seq,
 																filename}};
@@ -228,27 +280,29 @@ Client::parse_command(const string & buf)
 			_data_socks.push_back(sock);
 		}
 	} else if (regex_match(buf, m, regex("^\\s*upload\\s*([^\\s]+)\\s*$"))) {
-		char filename[MAX_BUF];
 		sscanf(m[1].str().c_str(), "%s", filename);
-		uint64_t size = 0;
 		path file;
 		Socket sock;
+		int success = 0;
 		if (is_regular_file(filename)) {
 			file = filename;
-			if (!_servers.empty()) { //musi się zmieścić
-				sockaddr_in best;
-				sock.conn = false;
-				sock.sent = false;
-
-				for (const auto & serv : _servers) {
-					if (serv.first > size) {
-						best = serv.second;
-						sock.connect_cmd = shared_ptr <Command> {new AddCmd{best, _cmd_seq, size, file.filename()}};
-						sock.filename = file;
-						break;
-					}
+			sock.size = file_size(file);
+			sock.filename = filename;
+			sock.cmd = READ;
+			sock.already_processed = 0;
+			if (!_servers.empty()) {
+				if (send_file_to_serv(sock)) {
+					open_udp_sock(sock);
+					_data_socks.push_back(sock);
+				} else {
+					cout << "File "
+						<< filename
+						<< " too big" << endl;
 				}
-				
+			} else {
+				syncronous_command(1);
+				_repeat_upload = true;
+				_repeat_filename = filename;
 			}
 		} else {
 			cout << "File "
@@ -256,17 +310,7 @@ Client::parse_command(const string & buf)
 				<< " does not exist" << endl;
 			return;
 		}
-		// TODO: a potem do następnego który ma miejsce
-		if (sock.connect_cmd) {
-			open_udp_sock(sock);
-			_data_socks.push_back(sock);
-		} else {
-			cout << "File "
-				<< filename
-				<< " too big" << endl;
-		}
 	} else if (regex_match(buf, m, regex("^\\s*remove\\s*([^\\s]+)\\s*$"))) {
-		char filename[MAX_BUF];
 		sscanf(m[1].str().c_str(), "%s", filename);
 		if (strlen(filename) != 0) {
 			_cmd_queue.push(shared_ptr <Command> {new DelCmd{_multicast,
@@ -322,14 +366,19 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 		sock.file = open((_directory / cmd.file_name()).c_str(), O_WRONLY | O_CREAT, 0644);
 
 	} else if (!strncmp(buf.c_str(), NO_WAY, strlen(NO_WAY))) {
-		NoWayCmd cmd{buf, remote_addr}; //TODO: sprobowac z nastepnym
-		cout << "File "
-			<< cmd.filename()
-			<< " downloading failed ("
-			<< inet_ntoa(remote_addr.sin_addr)
-			<< ":"
-			<< ntohs(remote_addr.sin_port)
-			<< ")" << endl;
+		NoWayCmd cmd{buf, remote_addr};
+		if (!send_file_to_serv(sock)) {
+				cout << "File "
+					<< cmd.filename()
+					<< " uploading failed ("
+					<< inet_ntoa(sock.connect_cmd->getAddr().sin_addr)
+					<< ":"
+					<< ntohs(sock.connect_cmd->getAddr().sin_port)
+					<< ")" << endl;
+			todel(sock, true);
+		} else {
+			open_udp_sock(sock);
+		}
 	} else if (!strncmp(buf.c_str(), CAN_ADD, strlen(CAN_ADD))) {
 		CanAddCmd cmd{buf, remote_addr};
 
@@ -342,6 +391,11 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 		print_invalid(remote_addr);
 	}
 }
+
+//TODO fetch parse_response
+/*
+*/
+
 
 void
 Client::syncronous_command(int parameter, const string & name)
@@ -376,6 +430,8 @@ Client::open_udp_sock(Socket & sock)
 	sockaddr_in local_address;
 	sock.cmd_socket = socket(AF_INET, SOCK_DGRAM, 0);
 	sock.todel = false;
+	sock.conn = false;
+	sock.sent = false;
 	sock.start_time = system_clock::now();
 
 	local_address.sin_family = AF_INET;
@@ -425,4 +481,23 @@ Client::print_invalid(sockaddr_in remote_addr)
 		<< ":"
 		<< ntohs(remote_addr.sin_port)
 		<< ".";
+}
+
+int
+Client::send_file_to_serv(Socket & sock)
+{
+	sock.conn = false;
+	sock.sent = false;
+
+	int j = 0;
+	for (const auto & serv : _servers) {
+		if (serv.first > sock.size && j >= sock.already_processed) {
+			path file{sock.filename};
+			sock.connect_cmd = shared_ptr <Command> {new AddCmd{serv.second, _cmd_seq, sock.size, file.filename()}};
+			sock.already_processed = j + 1;
+			return 1;
+		}
+		j++;
+	}
+	return 0;
 }

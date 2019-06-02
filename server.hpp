@@ -17,7 +17,7 @@ void signal_handler(int signal);
 class Server //TODO: komunikaty o błędach
 {
 public:
-	Server(const std::string&, in_port_t, const std::string&, unsigned int = 52428800, int = 5);
+	Server(const std::string&, in_port_t, const std::string&, unsigned int = 52428800, int = 5, bool = false);
 	~Server();
 	int run();
 
@@ -30,6 +30,7 @@ private:
 	timeval _timeout;
 	std::unordered_set <std::string> _files;
 	int _sock;
+	bool _synchronized;
 
 	// socket, timeout, file name, command
 	std::vector <Socket> _data_socks;

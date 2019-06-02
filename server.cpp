@@ -32,12 +32,14 @@ Server::Server(const string & mcast_addr,
 			   in_port_t cmd_port,
 			   const string & directory,
 			   unsigned max_space,
-			   int timeout)
+			   int timeout,
+			   bool synchronized)
 	: _mcast_addr{mcast_addr},
 	  _cmd_port{cmd_port},
 	  _directory{directory},
 	  _max_space{max_space},
-	  _timeout{timeout, 0}
+	  _timeout{timeout, 0},
+	  _synchronized{synchronized}
 {
 	index_files();
 	join_broadcast();
@@ -57,7 +59,7 @@ Server::run()
 	FD_ZERO(&wfds);
 	FD_SET(_sock, &rfds);
 	int max = _sock;
-	timeval * timeout = nullptr; //TODO: jakis sensowny timeout
+	timeval * timeout = nullptr;
 	system_clock::time_point first_time_point = system_clock::time_point::max();
 	timeval real_timeout{0, 0};
 
@@ -217,7 +219,7 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 	} else if (!strncmp(buf.c_str(), GET, strlen(GET))) {
 		GetCmd get_cmd{buf, remote_addr};
 		Socket sock;
-		sock.file = open_file(get_cmd.file_name(), O_RDONLY); // brak pliku?
+		sock.file = open_file(get_cmd.file_name(), O_RDONLY);
 		if (sock.file < 0)
 			syserr("opening file");
 		int port = open_tcp_port(sock, READ);
@@ -231,8 +233,10 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 		delete_file(cmd.file_name());
 	} else if (!strncmp(buf.c_str(), ADD, strlen(ADD))) {
 		AddCmd cmd{buf, remote_addr};
+		path file{cmd.file_name()};
 		if (cmd.requested_size() > space_left()
-			|| string(cmd.file_name()).find('/') != string::npos) {
+			|| string(cmd.file_name()).find('/') != string::npos
+			|| exists(file)) {
 			_cmd_queue.push(shared_ptr <Command> (new NoWayCmd{buf,
 														remote_addr,
 														cmd.file_name()}));
