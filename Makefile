@@ -4,7 +4,7 @@ CXXFLAGS = -lstdc++fs -std=c++17 -Wall -O2 -Wextra
 all: server client
 
 protocol:
-	${CC} ${CXXFLAGS} protocol.cpp -o protocol.o -c
+	${CC} protocol.cpp -o protocol.o -c ${CXXFLAGS}
 
 server: protocol
 	${CC} netstore-server.cpp server.cpp protocol.o -o netstore-server ${CXXFLAGS}

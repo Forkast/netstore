@@ -7,12 +7,24 @@
 #include <regex>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <random>
+
 
 using namespace std;
 using namespace std::filesystem;
 using namespace std::chrono;
 
 #define STDIN 0
+
+uint64_t generate_cmd_seq()
+{
+	std::random_device rd;
+	std::mt19937_64 gen(rd());
+
+	std::uniform_int_distribution<uint64_t> dis;
+
+	return dis(gen);
+}
 
 Client::Client(const string & mcast_addr, in_port_t cmd_port, const string & directory, int timeout)
 	: _mcast_addr{mcast_addr},
@@ -28,6 +40,7 @@ Client::Client(const string & mcast_addr, in_port_t cmd_port, const string & dir
 	_stdin_lock = {0, 0};
 	_locked = false;
 	open_udp_sock();
+	_cmd_seq = generate_cmd_seq();
 }
 
 int
@@ -291,19 +304,17 @@ Client::parse_response(const string & buf, sockaddr_in remote_addr)
 			cout << filename << " (" << inet_ntoa(remote_addr.sin_addr) << ")" << endl;
 		}
 	} else {
-		cout << "[PCKG ERROR] Skipping invalid package from "
-			<< inet_ntoa(remote_addr.sin_addr)
-			<< ":"
-			<< ntohs(remote_addr.sin_port)
-			<< ".";
+		print_invalid(remote_addr);
 	}
 }
 
 void
 Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, Socket & sock)
 {
-	if (SimplCmd{buf, remote_addr}.getCmdSeq() != _cmd_seq)
+	if (SimplCmd{buf, remote_addr}.getCmdSeq() != _cmd_seq) {
+		print_invalid(remote_addr);
 		return;
+	}
 	if (!strncmp(buf.c_str(), CONNECT_ME, strlen(CONNECT_ME))) {
 		ConnectMeCmd cmd{buf, remote_addr};
 
@@ -328,11 +339,7 @@ Client::parse_response_on_socket(const string & buf, sockaddr_in remote_addr, So
 			syserr("canadd open");
 
 	} else {
-		cout << "[PCKG ERROR] Skipping invalid package from "
-			<< inet_ntoa(remote_addr.sin_addr)
-			<< ":"
-			<< ntohs(remote_addr.sin_port)
-			<< ".";
+		print_invalid(remote_addr);
 	}
 }
 
@@ -408,4 +415,14 @@ Client::udp_socket_to_tcp(Socket & sock, sockaddr_in remote_addr, const CmplxCmd
 	sock.conn = true;
 	open_tcp_sock(sock, new_remote, read_write);
 	close(sock.cmd_socket);
+}
+
+void
+Client::print_invalid(sockaddr_in remote_addr)
+{
+	cout << "[PCKG ERROR] Skipping invalid package from "
+		<< inet_ntoa(remote_addr.sin_addr)
+		<< ":"
+		<< ntohs(remote_addr.sin_port)
+		<< ".";
 }

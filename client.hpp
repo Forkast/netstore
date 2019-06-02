@@ -62,4 +62,5 @@ private:
 	void parse_response_on_socket(const std::string & buf, sockaddr_in remote, Socket & sock);
 	void open_tcp_sock(Socket & sock, sockaddr_in remote_addr, int flags);
 	void udp_socket_to_tcp(Socket & sock, sockaddr_in remote_addr, const CmplxCmd & cmd, int read_write);
+	void print_invalid(sockaddr_in remote_addr);
 };
