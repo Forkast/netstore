@@ -189,6 +189,7 @@ Client::run()
 			sockaddr_in remote;
 			socklen_t len = sizeof remote;
 			char buf[MAX_UDP];
+			memset(buf, 0, MAX_UDP);
 			int a = recvfrom(_udp_sock, buf, MAX_UDP, 0, (sockaddr *) &remote, &len);
 			parse_response(string(buf, a), remote);
 		}
@@ -283,7 +284,6 @@ Client::parse_command(const string & buf)
 		sscanf(m[1].str().c_str(), "%s", filename);
 		path file;
 		Socket sock;
-		int success = 0;
 		if (is_regular_file(filename)) {
 			file = filename;
 			sock.size = file_size(file);

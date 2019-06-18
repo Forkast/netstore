@@ -212,10 +212,11 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 															  space_left()}});
 	} else if (!strncmp(buf.c_str(), LIST, strlen(LIST))) {
 		ListCmd list_cmd{buf, remote_addr};
+		uint64_t cmd_seq = list_cmd.getCmdSeq();
 		auto files_it = _files.begin();
 		string pattern{list_cmd.filename()};
 		while (files_it != _files.end())
-			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{buf, remote_addr, files_it, _files.end(), pattern}});
+			_cmd_queue.push(shared_ptr <Command> {new MyListCmd{remote_addr, files_it, _files.end(), pattern, cmd_seq}});
 	} else if (!strncmp(buf.c_str(), GET, strlen(GET))) {
 		GetCmd get_cmd{buf, remote_addr};
 		Socket sock;
@@ -233,7 +234,7 @@ Server::push_commands(const string & buf, sockaddr_in remote_addr)
 		delete_file(cmd.file_name());
 	} else if (!strncmp(buf.c_str(), ADD, strlen(ADD))) {
 		AddCmd cmd{buf, remote_addr};
-		path file{cmd.file_name()};
+		path file{_directory / cmd.file_name()};
 		if (cmd.requested_size() > space_left()
 			|| string(cmd.file_name()).find('/') != string::npos
 			|| exists(file)) {

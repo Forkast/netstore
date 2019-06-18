@@ -180,17 +180,18 @@ ListCmd::filename()
 	return _data;
 }
 
-MyListCmd::MyListCmd(const std::string & s, sockaddr_in remote,
+MyListCmd::MyListCmd(sockaddr_in remote,
 			std::unordered_set <std::string>::iterator & file_names_it,
 			const std::unordered_set <std::string>::iterator & files_end,
-			const std::string & pattern)
-	: SimplCmd{s, remote}
+			const std::string & pattern, uint64_t cmd_seq)
+	: SimplCmd{remote, cmd_seq}
 {
 	strncpy(_cmd, MY_LIST, CMD_LEN);
 	size_t size = MAX_BUF;
 	size_t offset = 0;
 	while (file_names_it != files_end) {
 		if (regex_match((*file_names_it), regex(".*" + pattern + ".*"))) {
+			cout << "MATCH!" << endl;
 			if ((*file_names_it).size() + 1 < size) {
 				memcpy(_data + offset, (*file_names_it).c_str(), (*file_names_it).size());
 				_data[offset + (*file_names_it).size()] = '\n';

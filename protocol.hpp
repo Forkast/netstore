@@ -129,10 +129,10 @@ public:
 class MyListCmd : public SimplCmd
 {
 public:
-	MyListCmd(const std::string & s, sockaddr_in remote,
+	MyListCmd(sockaddr_in remote,
 			  std::unordered_set <std::string>::iterator & file_names_it,
 			  const std::unordered_set <std::string>::iterator & files_end,
-			  const std::string & pattern);
+			  const std::string & pattern, uint64_t cmd_seq);
 
 	MyListCmd(const std::string & s, sockaddr_in remote);
 
