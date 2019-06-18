@@ -191,7 +191,6 @@ MyListCmd::MyListCmd(sockaddr_in remote,
 	size_t offset = 0;
 	while (file_names_it != files_end) {
 		if (regex_match((*file_names_it), regex(".*" + pattern + ".*"))) {
-			cout << "MATCH!" << endl;
 			if ((*file_names_it).size() + 1 < size) {
 				memcpy(_data + offset, (*file_names_it).c_str(), (*file_names_it).size());
 				_data[offset + (*file_names_it).size()] = '\n';
